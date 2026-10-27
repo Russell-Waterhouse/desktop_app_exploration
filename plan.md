@@ -55,29 +55,25 @@ Recipe manager. The same app will be built in each language/tech stack.
 
 ### Core features
 
-- Recipe list: thumbnail, title, prep/cook time, favorite star, search by title, filter by tag
+- Recipe list: thumbnail, title, prep/cook time, search by title
 - Recipe detail: photo, description, ingredients, numbered steps, notes
 - Add, edit, and delete recipes
-- Favorite toggle
-- Servings scaling: ingredient amounts scale with the servings value
-- Step-by-step mode: one step at a time, with next/previous navigation
 
 ### How it covers the criteria
 
 - Displaying text: titles, descriptions, ingredients, steps, notes, search
 - Displaying images: recipe photos as list thumbnails and detail images, imported from a file or downloaded from a URL
-- Buttons: add, edit, delete, favorite, servings controls, step navigation, import, export, search, tag filters
-- Animations: list/detail transitions, step transitions, favorite toggle, image loading state
+- Buttons: add, edit, delete, import, export, search
+- Animations: list/detail transitions, image loading state
 - Making a network call: import a recipe as JSON from a URL, and download a recipe image from a URL, both asynchronously with loading and error states and without blocking the UI
 - Interacting with disk as raw files: import and export recipes as JSON files (single recipe and collection), import an image file from disk, store recipe images as files on disk
-- Interacting with disk through SQLite: all recipe data lives in SQLite — recipes, ingredients, steps, tags, and favorites; image files are referenced by path from the database
+- Interacting with disk through SQLite: all recipe data lives in SQLite — recipes, ingredients, and steps; image files are referenced by path from the database
 
 ### Data model
 
-- Recipe: title, description, servings, prep time, cook time, image path, favorite
+- Recipe: title, description, servings, prep time, cook time, image path
 - Ingredient: recipe, position, amount, unit, name
 - Step: recipe, position, text
-- Tag: recipe, name
 
 ### Out of scope for this test
 

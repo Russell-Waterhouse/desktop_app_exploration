@@ -51,4 +51,4 @@ Build the same application in all these languages/tech stacks and see what works
 
 Recipe manager. See `plan.md` for the full spec.
 
-The same app in each stack: recipe list and detail views, add/edit/delete, favorites, servings scaling, and step-by-step mode — covering text, images, buttons, animations, network import (recipe JSON and images from URLs), raw-file import/export, and SQLite storage.
+The same app in each stack: recipe list and detail views, add/edit/delete, and search — covering text, images, buttons, animations, network import (recipe JSON and images from URLs), raw-file import/export, and SQLite storage.
