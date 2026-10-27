@@ -12,13 +12,24 @@ This repo is for choosing a desktop application development stack. See `plan.md`
 
 ## Frameworks to consider
 
-This list is incomplete:
+- Rust:
+  - Egui / Eframe
+  - Iced
+- C / C++:
+  - Dear ImGui
+  - GTK4
+- Odin:
+  - Raylib + Raygui
+  - Dear ImGui
+  - microui
+- Zig:
+  - DVUI
+- Backends underneath, not counted as UI frameworks:
+  - SDL
+  - Sokol
+  - Raylib
 
-- SDL
-- Raylib
-- Egui/Eframe
-- Something in Odin
-- Something in Zig
+Excluded: Qt (tried in the past, found buggy on Linux) and Slint (licensing).
 
 ## Targets
 
