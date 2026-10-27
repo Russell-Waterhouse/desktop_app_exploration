@@ -49,11 +49,6 @@ Build the same application in all these languages/tech stacks and see what works
 
 ## The application
 
-Criteria are TBD, but will include the following at a minimum:
+Recipe manager. See `plan.md` for the full spec.
 
-- Displaying text
-- Displaying images
-- Buttons
-- Animations
-- Making a network call
-- Interacting with disk both as raw files and through SQLite
+The same app in each stack: recipe list and detail views, add/edit/delete, favorites, servings scaling, and step-by-step mode — covering text, images, buttons, animations, network import (recipe JSON and images from URLs), raw-file import/export, and SQLite storage.
