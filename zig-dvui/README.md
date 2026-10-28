@@ -41,6 +41,24 @@ sudo dnf install curl xz git
 
 `zig-out/`, `.zig-cache/` and `zig-pkg/` are git-ignored.
 
+## AI-agent VM workaround
+
+`build_ubuntu_ai_agent_vm_hacky.sh` is VM-only and hacky: it
+reproduces, with comments, everything that was needed to build
+this in the author's AI-agent VM, where Zig's own fetch does not
+use the egress proxy, `/tmp` is a 512M tmpfs, and the package
+manager computes a different hash for the SDL 3.4.18 tarball
+than the SDL3 package's manifest. It clones every DVUI
+dependency with git (or downloads its tarball with curl), feeds
+them to Zig's cache with local `zig fetch` calls (from a copy
+without `.git` for packages with no `build.zig.zon`, or with
+`.paths = .{""}`, whose local fetch would otherwise include
+`.git` in the hash), builds once, patches the generated
+`zig-pkg/` copy of the SDL3 zon with the package manager's
+hash, and builds again. With `RUN_WINDOW=1` it also runs the
+app under Xvfb and screenshots it. Do not use it on a normal
+machine — use `install_ubuntu.sh` + `build_linux.sh` there.
+
 ## Code
 
 - `src/main.zig` — a minimal `dvui.App`: `dvui_app` with
