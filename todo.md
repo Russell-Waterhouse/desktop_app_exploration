@@ -8,14 +8,13 @@ The checklist is the same for every project so the stacks can be
 compared like for like. The shared network-import fixture
 (`test-data/recipes.json`) already exists, but no app imports it yet.
 
-Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
-`zig-dvui`, but they have not been tested on Fedora yet.
-`rust-egui` has no install script in the repo.
+Fedora install scripts exist for `cpp-imgui`, `odin-microui`,
+`zig-dvui`, and `rust-egui`, but they have not been tested on Fedora yet.
 
 ## Rust Egui (`rust-egui/`)
 
-- [ ] install script for Ubuntu
-- [ ] install script for Fedora
+- [X] install script for Ubuntu
+- [X] install script for Fedora
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
 - [X] recipe view with SQLite integration
