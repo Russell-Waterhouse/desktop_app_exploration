@@ -5,11 +5,13 @@ use crate::{Ingredient, Recipe};
 pub(crate) fn seed_recipes() -> Vec<Recipe> {
     vec![
         Recipe {
+            id: 0,
             title: "Banana Bread".to_string(),
             description: "A classic loaf, best with very ripe bananas.".to_string(),
             servings: 8,
             prep_minutes: 15,
             cook_minutes: 60,
+            image_path: None,
             ingredients: vec![
                 Ingredient { amount: "3".to_string(), unit: "".to_string(), name: "ripe bananas, mashed".to_string() },
                 Ingredient { amount: "1/2".to_string(), unit: "cup".to_string(), name: "butter, melted".to_string() },
@@ -29,11 +31,13 @@ pub(crate) fn seed_recipes() -> Vec<Recipe> {
             notes: "Optional: fold in walnuts or chocolate chips before baking.".to_string(),
         },
         Recipe {
+            id: 0,
             title: "Tomato Basil Pasta".to_string(),
             description: "A quick weeknight pasta with fresh tomatoes and basil.".to_string(),
             servings: 4,
             prep_minutes: 10,
             cook_minutes: 20,
+            image_path: None,
             ingredients: vec![
                 Ingredient { amount: "12".to_string(), unit: "oz".to_string(), name: "pasta".to_string() },
                 Ingredient { amount: "2".to_string(), unit: "lbs".to_string(), name: "tomatoes, chopped".to_string() },
@@ -51,11 +55,13 @@ pub(crate) fn seed_recipes() -> Vec<Recipe> {
             notes: "Serve immediately, with extra parmesan on top.".to_string(),
         },
         Recipe {
+            id: 0,
             title: "Chicken Stir Fry".to_string(),
             description: "Chicken and vegetables in a simple soy-ginger sauce, served with rice.".to_string(),
             servings: 4,
             prep_minutes: 15,
             cook_minutes: 15,
+            image_path: None,
             ingredients: vec![
                 Ingredient { amount: "1 1/2".to_string(), unit: "lbs".to_string(), name: "chicken breast, sliced".to_string() },
                 Ingredient { amount: "2".to_string(), unit: "".to_string(), name: "bell peppers, sliced".to_string() },
