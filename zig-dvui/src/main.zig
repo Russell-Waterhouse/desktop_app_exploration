@@ -1,17 +1,19 @@
 const std = @import("std");
 const dvui = @import("dvui");
+const db = @import("db.zig");
 
 // Recipe manager test app, recipe view only.
-// Hard-coded data for now, matching the Rust version's seed data
-// (Banana Bread, Tomato Basil Pasta, Chicken Stir Fry; 19
-// ingredients, 13 steps). No disk or network yet: this is the
-// same step the Rust and Odin versions took before SQLite.
+// Recipes now load from SQLite (db.zig) in the current working
+// directory, seeded once from the seed data below — the same
+// seed the Rust and Odin versions use (Banana Bread, Tomato
+// Basil Pasta, Chicken Stir Fry; 19 ingredients, 13 steps).
+// No network yet.
 //
 // Layout, like the Rust version:
 //   - left pane: "Recipes", a title search box, one button per
 //     matching recipe, selected recipe marked with "> "
 //   - right pane: detail for the selected recipe — description,
-//     servings/prep/cook, "[No image yet]", ingredients,
+//     servings, "[No image yet]", ingredients,
 //     numbered steps, notes
 // The search filters the list only; the detail keeps showing
 // the selected recipe even if it no longer matches the filter,
@@ -33,30 +35,13 @@ pub const main = dvui.App.main;
 pub const panic = dvui.App.panic;
 pub const std_options: std.Options = .{ .logFn = dvui.App.logFn };
 
-const Ingredient = struct {
-    amount: []const u8,
-    unit: []const u8,
-    name: []const u8,
-};
-
-const Recipe = struct {
-    title: []const u8,
-    description: []const u8,
-    servings: u32,
-    prep_minutes: u32,
-    cook_minutes: u32,
-    ingredients: []const Ingredient,
-    steps: []const []const u8,
-    notes: []const u8,
-};
-
-const recipes: [3]Recipe = .{
+// Seed data, used only when recipes.db is empty on first run;
+// later runs load from the database and do not re-seed.
+const seed_recipes: [3]db.Recipe = .{
     .{
         .title = "Banana Bread",
         .description = "A classic loaf, best with very ripe bananas.",
         .servings = 8,
-        .prep_minutes = 15,
-        .cook_minutes = 60,
         .ingredients = &.{
             .{ .amount = "3", .unit = "", .name = "ripe bananas, mashed" },
             .{ .amount = "1/2", .unit = "cup", .name = "butter, melted" },
@@ -79,8 +64,6 @@ const recipes: [3]Recipe = .{
         .title = "Tomato Basil Pasta",
         .description = "A quick weeknight pasta with fresh tomatoes and basil.",
         .servings = 4,
-        .prep_minutes = 10,
-        .cook_minutes = 20,
         .ingredients = &.{
             .{ .amount = "12", .unit = "oz", .name = "pasta" },
             .{ .amount = "2", .unit = "lbs", .name = "tomatoes, chopped" },
@@ -101,8 +84,6 @@ const recipes: [3]Recipe = .{
         .title = "Chicken Stir Fry",
         .description = "Chicken and vegetables in a simple soy-ginger sauce, served with rice.",
         .servings = 4,
-        .prep_minutes = 15,
-        .cook_minutes = 15,
         .ingredients = &.{
             .{ .amount = "1 1/2", .unit = "lbs", .name = "chicken breast, sliced" },
             .{ .amount = "2", .unit = "", .name = "bell peppers, sliced" },
@@ -143,6 +124,12 @@ fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 }
 
 pub fn appFrame() !dvui.App.Result {
+    // Load from SQLite on the first frame; a no-op after that.
+    // On failure db.recipes stays empty and db.load_error is
+    // set, shown in the detail pane below instead of crashing.
+    db.ensureLoaded(&seed_recipes);
+    const recipes = db.recipes;
+
     var root = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .both, .background = true });
     defer root.deinit();
 
@@ -191,7 +178,21 @@ pub fn appFrame() !dvui.App.Result {
         });
         defer detail.deinit();
 
-        const recipe = recipes[selected_recipe];
+        if (db.load_error) |err| {
+            dvui.label(@src(), "Failed to load recipes:", .{}, .{ .font = .theme(.title) });
+            var tl = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal });
+            defer tl.deinit();
+            tl.addText(err, .{});
+            return .ok;
+        }
+        if (recipes.len == 0) {
+            dvui.label(@src(), "No recipes found.", .{}, .{ .font = .theme(.title) });
+            return .ok;
+        }
+
+        // Clamp the selection if the loaded list is shorter
+        // than the previously selected index.
+        const recipe = recipes[@min(selected_recipe, recipes.len - 1)];
 
         dvui.label(@src(), "{s}", .{recipe.title}, .{ .font = .theme(.title) });
 
@@ -201,7 +202,7 @@ pub fn appFrame() !dvui.App.Result {
             tl.addText(recipe.description, .{});
         }
 
-        dvui.label(@src(), "Servings: {d} | Prep: {d} min | Cook: {d} min", .{ recipe.servings, recipe.prep_minutes, recipe.cook_minutes }, .{});
+        dvui.label(@src(), "Servings: {d}", .{recipe.servings}, .{});
         dvui.label(@src(), "[No image yet]", .{}, .{});
 
         dvui.label(@src(), "Ingredients", .{}, .{ .font = .theme(.title) });

@@ -60,7 +60,8 @@ done
 # curl downloads the Zig tarball, xz-utils extracts it, git is what
 # `zig fetch` uses to fetch the DVUI dependency below. The X11/GL
 # packages are what DVUI's SDL2 backend builds against (system
-# X11 headers, not Zig-packaged ones).
+# X11 headers, not Zig-packaged ones). libsqlite3-dev is what
+# db.zig links against (system SQLite, not a bundled copy).
 $SUDO timeout 600 apt-get install -y \
     curl \
     xz-utils \
@@ -72,7 +73,8 @@ $SUDO timeout 600 apt-get install -y \
     libxfixes-dev \
     libxinerama-dev \
     libxrandr-dev \
-    libgl1-mesa-dev
+    libgl1-mesa-dev \
+    libsqlite3-dev
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

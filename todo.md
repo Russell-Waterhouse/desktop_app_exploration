@@ -179,7 +179,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`,
 - [X] install script for Fedora
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
-- [ ] recipe view with SQLite integration
+- [X] recipe view with SQLite integration
 - [ ] add recipe
 - [ ] edit recipe
 - [ ] delete recipe

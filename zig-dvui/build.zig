@@ -19,5 +19,11 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // db.zig uses the system SQLite C API, so the build needs
+    // the system SQLite development package (libsqlite3-dev on
+    // Ubuntu, sqlite-devel on Fedora); see db.zig. In Zig
+    // 0.17, system libraries link through the root module,
+    // not the executable step, and this also links libc.
+    exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(exe);
 }

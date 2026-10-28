@@ -214,7 +214,7 @@ fetch_check_nogit() {
 # re-run of this script does not need to re-install packages
 # that are already there. On a fresh machine the else-branch
 # below does the full install, exactly as install_ubuntu.sh does.
-APT_PKGS="curl xz-utils git libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxinerama-dev libxrandr-dev libgl1-mesa-dev xvfb ffmpeg"
+APT_PKGS="curl xz-utils git libx11-dev libxext-dev libxcursor-dev libxi-dev libxfixes-dev libxinerama-dev libxrandr-dev libgl1-mesa-dev libsqlite3-dev xvfb ffmpeg"
 APT_MISSING=0
 for pkg in $APT_PKGS; do
     if ! dpkg -s "$pkg" >/dev/null 2>&1; then

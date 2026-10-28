@@ -11,7 +11,8 @@
 # libxext-dev -> libXext-devel, libxcursor-dev -> libXcursor-devel,
 # libxi-dev -> libXi-devel, libxfixes-dev -> libXfixes-devel,
 # libxinerama-dev -> libXinerama-devel, libxrandr-dev -> libXrandr-devel,
-# libgl1-mesa-dev -> mesa-libGL-devel; curl and git are the same).
+# libgl1-mesa-dev -> mesa-libGL-devel, libsqlite3-dev -> sqlite-devel;
+# curl and git are the same).
 # Unlike apt, dnf has no separate update step: dnf install
 # refreshes repository metadata as needed. The install is wrapped
 # in `timeout` (coreutils, present on Fedora too), for the same
@@ -50,7 +51,8 @@ ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
 # curl downloads the Zig tarball, xz extracts it, git is what
 # `zig fetch` uses to fetch the DVUI dependency below. The X11/GL
 # packages are what DVUI's SDL2 backend builds against (system
-# X11 headers, not Zig-packaged ones).
+# X11 headers, not Zig-packaged ones). sqlite-devel is what
+# db.zig links against (system SQLite, not a bundled copy).
 $SUDO timeout 600 dnf install -y \
     curl \
     xz \
@@ -62,7 +64,8 @@ $SUDO timeout 600 dnf install -y \
     libXfixes-devel \
     libXinerama-devel \
     libXrandr-devel \
-    mesa-libGL-devel
+    mesa-libGL-devel \
+    sqlite-devel
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

@@ -44,9 +44,13 @@ equivalent of `install_ubuntu.sh`):
 
 ## Recipe view
 
-Hard-coded data for now, matching the Rust version's seed:
-Banana Bread, Tomato Basil Pasta, and Chicken Stir Fry
-(19 ingredients, 13 steps total). No disk or network yet.
+Recipes load from SQLite (`recipes.db` in the current working
+directory, git-ignored), seeded once on first run with the
+same seed the Rust and Odin versions use: Banana Bread,
+Tomato Basil Pasta, and Chicken Stir Fry (19 ingredients,
+13 steps total). A second run loads from the database and
+does not re-seed. A load failure is shown in the detail pane
+instead of crashing. No network yet.
 
 - Left pane: "Recipes", a title search box, and one button
   per matching recipe. The selected recipe is marked "> ".
@@ -61,9 +65,18 @@ Banana Bread, Tomato Basil Pasta, and Chicken Stir Fry
 - `src/main.zig` — a minimal `dvui.App`: `dvui_app` with
   `frameFn = appFrame`, which draws the two-pane recipe UI
   above. `main`, `panic` and the log function are all
-  DVUI's App-provided ones. Recipe data is a `const` array
-  in this file; the search text and selection are the only
-  mutable frame state.
+  DVUI's App-provided ones. The search text and selection are
+  the only mutable frame state; the recipes themselves come
+  from `db.zig`.
+- `src/db.zig` — SQLite storage via the system SQLite C API
+  (declared by hand with `extern fn`, since Zig 0.17 removed
+  `@cImport`; linked with `linkSystemLibrary("sqlite3")` on
+  the root module in `build.zig`, so the build needs
+  libsqlite3-dev on Ubuntu / sqlite-devel on Fedora).
+  Schema matches the Rust and Odin versions (recipes,
+  ingredients, steps, foreign keys on). Loading is lazy, once,
+  on the first frame; one connection is held for the app's
+  lifetime.
 - `build.zig` — `b.dependency("dvui", .{ .backend = .sdl2 })`
   and imports `dvui_dep.module("dvui_sdl2")` as `"dvui"`.
 
