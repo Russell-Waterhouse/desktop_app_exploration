@@ -38,6 +38,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -68,6 +70,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -98,6 +102,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -128,6 +134,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -158,6 +166,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -188,6 +198,8 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
 
@@ -218,5 +230,7 @@ has been tested on Fedora yet.
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
+- [ ] unit tests for recipe data, search, and encoding logic
+- [ ] UI tests for recipe list/detail, add, edit, and delete
 - [ ] Windows build
 - [ ] macOS build
