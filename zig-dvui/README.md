@@ -1,8 +1,7 @@
 # zig-dvui
 
 Zig + DVUI version of the recipe manager test app, currently
-a hello-world window: a 400x300 window titled "Hello DVUI"
-showing the label "Hello, world!".
+the recipe view: a 900x600 window titled "Recipe Manager".
 
 DVUI's current main is tested with Zig v0.17.0, so that version
 is pinned in `install_ubuntu.sh` and in `build.zig.zon`.
@@ -41,6 +40,31 @@ sudo dnf install curl xz git
 
 `zig-out/`, `.zig-cache/` and `zig-pkg/` are git-ignored.
 
+## Recipe view
+
+Hard-coded data for now, matching the Rust version's seed:
+Banana Bread, Tomato Basil Pasta, and Chicken Stir Fry
+(19 ingredients, 13 steps total). No disk or network yet.
+
+- Left pane: "Recipes", a title search box, and one button
+  per matching recipe. The selected recipe is marked "> ".
+  The search filters the list only; the detail keeps showing
+  the selected recipe even if it no longer matches the filter.
+- Right pane (scrollable): detail for the selected recipe —
+  description, servings/prep/cook, "[No image yet]",
+  ingredients, numbered steps, and notes.
+
+## Code
+
+- `src/main.zig` — a minimal `dvui.App`: `dvui_app` with
+  `frameFn = appFrame`, which draws the two-pane recipe UI
+  above. `main`, `panic` and the log function are all
+  DVUI's App-provided ones. Recipe data is a `const` array
+  in this file; the search text and selection are the only
+  mutable frame state.
+- `build.zig` — `b.dependency("dvui", .{ .backend = .sdl2 })`
+  and imports `dvui_dep.module("dvui_sdl2")` as `"dvui"`.
+
 ## AI-agent VM workaround
 
 `build_ubuntu_ai_agent_vm_hacky.sh` is VM-only and hacky: it
@@ -58,12 +82,3 @@ without `.git` for packages with no `build.zig.zon`, or with
 hash, and builds again. With `RUN_WINDOW=1` it also runs the
 app under Xvfb and screenshots it. Do not use it on a normal
 machine — use `install_ubuntu.sh` + `build_linux.sh` there.
-
-## Code
-
-- `src/main.zig` — a minimal `dvui.App`: `dvui_app` with
-  `frameFn = appFrame`, which draws a vertical box containing
-  one label. `main`, `panic` and the log function are all
-  DVUI's App-provided ones.
-- `build.zig` — `b.dependency("dvui", .{ .backend = .sdl2 })`
-  and imports `dvui_dep.module("dvui_sdl2")` as `"dvui"`.

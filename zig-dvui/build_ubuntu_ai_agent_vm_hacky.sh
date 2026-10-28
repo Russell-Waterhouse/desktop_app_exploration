@@ -368,8 +368,8 @@ if [ "${RUN_WINDOW:-0}" = "1" ]; then
             -frames:v 1 ./zig-dvui-window.png 2>&1 | tail -3
         ls -lh ./zig-dvui-window.png
         kill "$APP_PID" "$XVFB_PID" 2>/dev/null || true
-        echo "Screenshot: ./zig-dvui-window.png (should show a white"
-        echo "400x300 window with 'Hello, world!' in the top left)"
+        echo "Screenshot: ./zig-dvui-window.png (should show the"
+        echo "900x600 Recipe Manager window)"
     else
         echo "RUN_WINDOW=1 was set, but Xvfb or ffmpeg is not available;"
         echo "skipping the run check. Run it manually with:"
