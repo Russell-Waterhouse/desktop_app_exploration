@@ -35,6 +35,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -62,6 +63,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -89,6 +91,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -116,6 +119,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -143,6 +147,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -170,6 +175,7 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
 
@@ -197,5 +203,6 @@ has been tested on Fedora yet.
 - [ ] raw-file export: recipes as JSON, collection
 - [ ] CPU profiling
 - [ ] memory profiling
+- [ ] compile time profiling
 - [ ] Windows build
 - [ ] macOS build
