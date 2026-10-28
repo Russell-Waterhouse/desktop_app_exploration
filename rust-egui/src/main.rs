@@ -1,7 +1,9 @@
 mod db;
+mod images;
 mod seed;
 
 use eframe::egui;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 struct Ingredient {
@@ -118,6 +120,39 @@ struct RecipeApp {
     form_error: Option<String>,
     detail_error: Option<String>,
     confirming_delete: bool,
+    // Texture cache, keyed by image path. Textures are never evicted
+    // in this version; fine for a small test app.
+    textures: HashMap<String, egui::TextureHandle>,
+    texture_failures: HashSet<String>,
+}
+
+// Load and cache a texture for an image file, once. Returns None
+// (and remembers the failure, so it is not retried every frame)
+// when the file is missing or cannot be decoded.
+fn texture_for(
+    ui: &mut egui::Ui,
+    textures: &mut HashMap<String, egui::TextureHandle>,
+    failures: &mut HashSet<String>,
+    path: &str,
+) -> Option<egui::TextureHandle> {
+    if let Some(texture) = textures.get(path) {
+        return Some(texture.clone());
+    }
+    if failures.contains(path) {
+        return None;
+    }
+    let rgba = image::open(path).ok()?.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let pixels = rgba.into_raw();
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+        [width as usize, height as usize],
+        &pixels,
+    );
+    let texture = ui
+        .ctx()
+        .load_texture(path, color_image, egui::TextureOptions::default());
+    textures.insert(path.to_string(), texture.clone());
+    Some(texture)
 }
 
 fn main() -> eframe::Result<()> {
@@ -143,6 +178,8 @@ fn main() -> eframe::Result<()> {
                 form_error: None,
                 detail_error: None,
                 confirming_delete: false,
+                textures: HashMap::new(),
+                texture_failures: HashSet::new(),
             }))
         }),
     )
@@ -157,6 +194,17 @@ impl RecipeApp {
 
 impl eframe::App for RecipeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Pre-load textures for every recipe with an image, so the
+        // list and detail panes below can use the cache by lookup.
+        let image_paths: Vec<String> = self
+            .recipes
+            .iter()
+            .filter_map(|recipe| recipe.image_path.clone())
+            .collect();
+        for path in image_paths {
+            texture_for(ui, &mut self.textures, &mut self.texture_failures, &path);
+        }
+
         let editing = matches!(self.mode, Mode::Editing { .. });
         // Edit a copy of the search text inside the panel to keep
         // the borrow checker happy, then write it back afterwards.
@@ -184,17 +232,29 @@ impl eframe::App for RecipeApp {
                     if !query.is_empty() && !recipe.title.to_lowercase().contains(&query) {
                         continue;
                     }
-                    if editing {
-                        // Don't let a list click discard an in-progress edit.
-                        ui.label(&recipe.title);
-                    } else if ui
-                        .selectable_label(selected_id == Some(recipe.id), &recipe.title)
-                        .clicked()
-                    {
-                        selected_id = Some(recipe.id);
-                        self.confirming_delete = false;
-                        self.detail_error = None;
-                    }
+                    let thumbnail = recipe
+                        .image_path
+                        .as_ref()
+                        .and_then(|path| self.textures.get(path).cloned());
+                    ui.horizontal(|ui| {
+                        if let Some(texture) = thumbnail {
+                            ui.add(
+                                egui::Image::new(&texture)
+                                    .fit_to_exact_size(egui::vec2(32.0, 32.0)),
+                            );
+                        }
+                        if editing {
+                            // Don't let a list click discard an in-progress edit.
+                            ui.label(&recipe.title);
+                        } else if ui
+                            .selectable_label(selected_id == Some(recipe.id), &recipe.title)
+                            .clicked()
+                        {
+                            selected_id = Some(recipe.id);
+                            self.confirming_delete = false;
+                            self.detail_error = None;
+                        }
+                    });
                 }
             });
         });
@@ -235,7 +295,25 @@ impl eframe::App for RecipeApp {
                     ui.label("Cook time (minutes):");
                     ui.text_edit_singleline(&mut draft.cook_text);
                     ui.label("Image path:");
-                    ui.text_edit_singleline(&mut draft.image_path);
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut draft.image_path);
+                        if ui.button("Choose image…").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
+                                .pick_file()
+                            {
+                                match images::import_image(&path) {
+                                    Ok(imported) => {
+                                        draft.image_path = imported;
+                                        self.form_error = None;
+                                    }
+                                    Err(err) => {
+                                        self.form_error = Some(err);
+                                    }
+                                }
+                            }
+                        }
+                    });
                     ui.separator();
 
                     ui.heading("Ingredients");
@@ -360,7 +438,17 @@ impl eframe::App for RecipeApp {
                         recipe.servings, recipe.prep_minutes, recipe.cook_minutes
                     ));
                     if let Some(path) = &recipe.image_path {
-                        ui.label(format!("Image: {}", path));
+                        if let Some(texture) = self.textures.get(path).cloned() {
+                            ui.add(
+                                egui::Image::new(&texture)
+                                    .max_width(400.0)
+                                    .max_height(300.0),
+                            );
+                        } else if self.texture_failures.contains(path) {
+                            ui.label(format!("[Image could not be loaded: {}]", path));
+                        } else {
+                            ui.label("[No image yet]");
+                        }
                     } else {
                         ui.label("[No image yet]");
                     }

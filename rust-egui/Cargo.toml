@@ -5,4 +5,6 @@ edition = "2021"
 
 [dependencies]
 eframe = "0.37.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+rfd = "0.17.2"
 rusqlite = { version = "0.41.0", features = ["bundled"] }
