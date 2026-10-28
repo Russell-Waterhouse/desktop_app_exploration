@@ -22,7 +22,6 @@ This repo is for choosing a desktop application development stack.
   - GTK4
 - Odin:
   - Raylib + Raygui
-  - Dear ImGui
   - microui
 - Zig:
   - DVUI
