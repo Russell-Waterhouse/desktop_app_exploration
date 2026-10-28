@@ -1,28 +1,106 @@
 {
   "recipes": [
     {
-      "title": "Banana Bread",
-      "description": "A classic loaf, best with very ripe bananas.",
-      "servings": 8,
-      "prep_minutes": 15,
-      "cook_minutes": 60,
+      "title": "Fried Chicken",
+      "description": "Crisp buttermilk fried chicken with a seasoned flour coating.",
+      "servings": 4,
+      "prep_minutes": 20,
+      "cook_minutes": 25,
       "image_path": null,
-      "notes": "Optional: fold in walnuts or chocolate chips before baking.",
+      "notes": "Keep the oil at 350°F and do not crowd the pan, or the coating will go soggy.",
       "ingredients": [
         {
-          "amount": "3",
+          "amount": "2",
+          "unit": "lbs",
+          "name": "chicken pieces"
+        },
+        {
+          "amount": "2",
+          "unit": "cups",
+          "name": "buttermilk"
+        },
+        {
+          "amount": "2",
+          "unit": "cups",
+          "name": "flour"
+        },
+        {
+          "amount": "1",
+          "unit": "tbsp",
+          "name": "paprika"
+        },
+        {
+          "amount": "1",
+          "unit": "tsp",
+          "name": "garlic powder"
+        },
+        {
+          "amount": "1",
+          "unit": "tsp",
+          "name": "onion powder"
+        },
+        {
+          "amount": "2",
+          "unit": "tsp",
+          "name": "salt"
+        },
+        {
+          "amount": "1",
+          "unit": "tsp",
+          "name": "black pepper"
+        },
+        {
+          "amount": "4",
+          "unit": "cups",
+          "name": "oil for frying"
+        }
+      ],
+      "steps": [
+        "Soak the chicken in the buttermilk for at least 30 minutes.",
+        "Mix the flour with the paprika, garlic powder, onion powder, salt, and pepper.",
+        "Lift the chicken from the buttermilk, letting the excess drip off, and dredge it in the seasoned flour.",
+        "Heat the oil to 350°F and fry the chicken in batches for 12-15 minutes, until golden and 165°F inside.",
+        "Drain on a rack and rest for 5 minutes before serving."
+      ]
+    },
+    {
+      "title": "Lasagna",
+      "description": "Layered pasta with a beef-tomato sauce, ricotta, and melted mozzarella.",
+      "servings": 8,
+      "prep_minutes": 30,
+      "cook_minutes": 45,
+      "image_path": null,
+      "notes": "Resting for 10 minutes before slicing keeps the layers from sliding apart.",
+      "ingredients": [
+        {
+          "amount": "12",
           "unit": "",
-          "name": "ripe bananas, mashed"
+          "name": "lasagna noodles"
         },
         {
-          "amount": "1/2",
-          "unit": "cup",
-          "name": "butter, melted"
+          "amount": "1",
+          "unit": "lb",
+          "name": "ground beef"
         },
         {
-          "amount": "3/4",
-          "unit": "cup",
-          "name": "sugar"
+          "amount": "1",
+          "unit": "",
+          "name": "onion, chopped"
+        },
+        {
+          "amount": "3",
+          "unit": "cloves",
+          "name": "garlic, minced"
+        },
+        {
+          "amount": "24",
+          "unit": "oz",
+          "name": "tomato sauce"
+        },
+        {
+          "amount": "15",
+          "unit": "oz",
+          "name": "ricotta cheese"
         },
         {
           "amount": "1",
@@ -30,121 +108,90 @@
           "name": "egg"
         },
         {
-          "amount": "1",
-          "unit": "tsp",
-          "name": "vanilla"
-        },
-        {
-          "amount": "1",
-          "unit": "tsp",
-          "name": "baking soda"
-        },
-        {
-          "amount": "1 1/2",
-          "unit": "cups",
-          "name": "flour"
-        }
-      ],
-      "steps": [
-        "Preheat the oven to 350°F and grease a 9x5 loaf pan.",
-        "Mash the bananas, then stir in the melted butter, sugar, egg, and vanilla.",
-        "Stir in the baking soda and flour until just combined.",
-        "Pour into the pan and bake for 55-65 minutes, until a toothpick comes out clean.",
-        "Cool in the pan for 10 minutes, then turn out onto a rack."
-      ]
-    },
-    {
-      "title": "Tomato Basil Pasta",
-      "description": "A quick weeknight pasta with fresh tomatoes and basil.",
-      "servings": 4,
-      "prep_minutes": 10,
-      "cook_minutes": 20,
-      "image_path": null,
-      "notes": "Serve immediately, with extra parmesan on top.",
-      "ingredients": [
-        {
-          "amount": "12",
-          "unit": "oz",
-          "name": "pasta"
-        },
-        {
           "amount": "2",
-          "unit": "lbs",
-          "name": "tomatoes, chopped"
-        },
-        {
-          "amount": "3",
-          "unit": "cloves",
-          "name": "garlic, sliced"
-        },
-        {
-          "amount": "1/4",
-          "unit": "cup",
-          "name": "olive oil"
-        },
-        {
-          "amount": "1",
-          "unit": "cup",
-          "name": "basil leaves"
+          "unit": "cups",
+          "name": "mozzarella, shredded"
         },
         {
           "amount": "1/2",
           "unit": "cup",
           "name": "parmesan, grated"
-        }
-      ],
-      "steps": [
-        "Cook the pasta in salted water until al dente, reserving a cup of pasta water.",
-        "Meanwhile, warm the olive oil and garlic until fragrant, about 2 minutes.",
-        "Add the tomatoes and cook until they soften, about 8 minutes.",
-        "Toss the pasta with the sauce, basil, and parmesan, adding pasta water as needed."
-      ]
-    },
-    {
-      "title": "Chicken Stir Fry",
-      "description": "Chicken and vegetables in a simple soy-ginger sauce, served with rice.",
-      "servings": 4,
-      "prep_minutes": 15,
-      "cook_minutes": 15,
-      "image_path": null,
-      "notes": "Serve over rice.",
-      "ingredients": [
-        {
-          "amount": "1 1/2",
-          "unit": "lbs",
-          "name": "chicken breast, sliced"
-        },
-        {
-          "amount": "2",
-          "unit": "",
-          "name": "bell peppers, sliced"
-        },
-        {
-          "amount": "2",
-          "unit": "cups",
-          "name": "broccoli florets"
-        },
-        {
-          "amount": "3",
-          "unit": "tbsp",
-          "name": "soy sauce"
         },
         {
           "amount": "1",
           "unit": "tbsp",
-          "name": "ginger, grated"
-        },
-        {
-          "amount": "2",
-          "unit": "cloves",
-          "name": "garlic, minced"
+          "name": "Italian seasoning"
         }
       ],
       "steps": [
-        "Sear the chicken in a hot, oiled pan until cooked through, then set aside.",
-        "Stir fry the peppers and broccoli until just tender, about 4 minutes.",
-        "Return the chicken to the pan with the soy sauce, ginger, and garlic.",
-        "Cook for 2 more minutes, stirring, until the sauce coats everything."
+        "Preheat the oven to 375°F and cook the noodles until just tender, then drain.",
+        "Brown the beef with the onion and garlic, drain, then stir in the tomato sauce and simmer for 10 minutes.",
+        "Mix the ricotta, egg, parmesan, and Italian seasoning.",
+        "In a baking dish, layer sauce, noodles, ricotta mixture, and mozzarella, repeating and finishing with sauce and mozzarella.",
+        "Cover with foil and bake for 30 minutes, then uncover and bake for 15 more minutes until bubbly. Rest for 10 minutes before slicing."
+      ]
+    },
+    {
+      "title": "Butter Tarts",
+      "description": "Canadian butter tarts with flaky pastry and a gooey brown sugar and maple filling.",
+      "servings": 12,
+      "prep_minutes": 20,
+      "cook_minutes": 20,
+      "image_path": null,
+      "notes": "The centres should still be slightly wobbly when they come out of the oven; they set as they cool.",
+      "ingredients": [
+        {
+          "amount": "12",
+          "unit": "",
+          "name": "tart shells"
+        },
+        {
+          "amount": "1/2",
+          "unit": "cup",
+          "name": "butter, melted"
+        },
+        {
+          "amount": "1",
+          "unit": "cup",
+          "name": "brown sugar, packed"
+        },
+        {
+          "amount": "1/2",
+          "unit": "cup",
+          "name": "maple syrup"
+        },
+        {
+          "amount": "2",
+          "unit": "",
+          "name": "eggs"
+        },
+        {
+          "amount": "1",
+          "unit": "tsp",
+          "name": "vinegar"
+        },
+        {
+          "amount": "1",
+          "unit": "tsp",
+          "name": "vanilla"
+        },
+        {
+          "amount": "1/2",
+          "unit": "cup",
+          "name": "raisins"
+        },
+        {
+          "amount": "1",
+          "unit": "pinch",
+          "name": "salt"
+        }
+      ],
+      "steps": [
+        "Preheat the oven to 400°F and place the tart shells in a muffin tin.",
+        "Whisk the butter, brown sugar, maple syrup, eggs, vinegar, vanilla, and salt until smooth.",
+        "Drop a few raisins into each shell, then fill each shell about two-thirds full.",
+        "Bake for 18-20 minutes, until the filling is set at the edges and still slightly wobbly in the centre.",
+        "Cool in the tin for 10 minutes, then move to a rack."
       ]
     }
   ]
