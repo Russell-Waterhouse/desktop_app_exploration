@@ -1,7 +1,8 @@
 # cpp-imgui
 
-C++ + Dear ImGui version of the recipe manager test app, starting
-with a hello world window. Backend is SDL2 + OpenGL3.
+C++ + Dear ImGui version of the recipe manager test app, currently
+with a recipe list/detail view using hard-coded mock data.
+Backend is SDL2 + OpenGL3.
 
 Dear ImGui source is fetched at build time by CMake (FetchContent,
 pinned to v1.93.0) and is not checked in.
