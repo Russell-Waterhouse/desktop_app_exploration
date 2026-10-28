@@ -25,6 +25,7 @@ $SUDO apt-get install -y \
     g++ \
     git \
     libsdl2-dev \
-    libgl1-mesa-dev
+    libgl1-mesa-dev \
+    libsqlite3-dev
 
 echo "Dependencies installed. Build with ./build_linux.sh"

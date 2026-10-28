@@ -1,18 +1,22 @@
 # cpp-imgui
 
 C++ + Dear ImGui version of the recipe manager test app, currently
-with a recipe list/detail view using hard-coded mock data.
+with a recipe list/detail view loaded from SQLite.
 Backend is SDL2 + OpenGL3.
 
 Dear ImGui source is fetched at build time by CMake (FetchContent,
 pinned to v1.93.0) and is not checked in.
+
+Recipes are stored in `recipes.db` in the current working directory,
+created on first run and seeded with 3 recipes. `recipes.db` is
+git-ignored.
 
 ## Build
 
 Ubuntu (this VM):
 
 ```sh
-sudo apt install cmake g++ libsdl2-dev libgl1-mesa-dev
+sudo apt install cmake g++ libsdl2-dev libgl1-mesa-dev libsqlite3-dev
 cmake -S . -B build
 cmake --build build
 ./build/cpp-imgui
@@ -21,7 +25,7 @@ cmake --build build
 Fedora (target platform, package names only — not yet tested here):
 
 ```sh
-sudo dnf install cmake gcc-c++ SDL2-devel mesa-libGL-devel
+sudo dnf install cmake gcc-c++ SDL2-devel mesa-libGL-devel sqlite-devel
 cmake -S . -B build
 cmake --build build
 ./build/cpp-imgui

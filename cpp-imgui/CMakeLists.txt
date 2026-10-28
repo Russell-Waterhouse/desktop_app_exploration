@@ -18,9 +18,11 @@ FetchContent_MakeAvailable(imgui)
 
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 add_executable(cpp-imgui
     main.cpp
+    db.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -34,4 +36,4 @@ target_include_directories(cpp-imgui PRIVATE
     ${imgui_SOURCE_DIR}/backends
 )
 
-target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL dl)
+target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite::SQLite3 dl)
