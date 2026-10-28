@@ -3,10 +3,12 @@
     .version = "0.0.0",
     .fingerprint = 0x6b301c066f40c23d,
     .minimum_zig_version = "0.17.0",
-    // No dependencies yet: this is just a hello-world program.
-    // ./install_ubuntu.sh adds the DVUI dependency (pinned commit,
-    // see that script) when DVUI is actually wired in.
-    .dependencies = .{},
+    .dependencies = .{
+        .dvui = .{
+            .url = "git+https://github.com/david-vanderson/dvui#f85184497c5d231e398344d288d6626e9d6d792c",
+            .hash = "dvui-0.6.0-dev-AQFJmXqTBAGIFho3xAKct320CiNm-lvshf7_c1Q_Eur9",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

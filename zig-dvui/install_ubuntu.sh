@@ -44,11 +44,21 @@ for attempt in 1 2 3 4 5; do
 done
 
 # curl downloads the Zig tarball, xz-utils extracts it, git is what
-# `zig fetch` uses to fetch the DVUI dependency below.
+# `zig fetch` uses to fetch the DVUI dependency below. The X11/GL
+# packages are what DVUI's SDL2 backend builds against (system
+# X11 headers, not Zig-packaged ones).
 $SUDO apt-get install -y \
     curl \
     xz-utils \
-    git
+    git \
+    libx11-dev \
+    libxext-dev \
+    libxcursor-dev \
+    libxi-dev \
+    libxfixes-dev \
+    libxinerama-dev \
+    libxrandr-dev \
+    libgl1-mesa-dev
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then
@@ -72,10 +82,10 @@ fi
 # Zig's cache). Pinned to DVUI main at commit f85184497c5d231e398344d288d6626e9d6d792c
 # (2026-10-27, the current main tested with Zig 0.17.0), so re-running
 # this keeps the same entry instead of tracking a moving main.
-# DVUI is not used by src/main.zig yet — this step just gets the
-# dependency in place for the next step, wiring up a DVUI window.
-# Note: once DVUI is in build.zig.zon, the next build will also fetch
-# DVUI's own dependencies, so that build needs network access.
+# The committed build.zig.zon already contains this same entry, so
+# this is a re-fetch, not a change, on a fresh checkout.
+# Note: the next build will also fetch DVUI's own dependencies, so
+# that build needs network access.
 zig fetch --save "git+https://github.com/david-vanderson/dvui#f85184497c5d231e398344d288d6626e9d6d792c"
 
 echo "Installed: zig $(zig version)"
