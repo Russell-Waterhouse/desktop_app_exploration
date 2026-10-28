@@ -62,13 +62,17 @@ done
 # clang links Odin programs on Linux, curl downloads the release,
 # unzip/tar extract it (which one depends on the asset above), and
 # the X11/GL development files are what the raylib window links
-# against (raylib itself ships prebuilt with Odin).
+# against (raylib itself ships prebuilt with Odin). libsqlite3-dev
+# is what the SQLite step links against: Odin ships no SQLite
+# package, so src/db.odin declares the system SQLite C API and
+# links the system library (see the SQLite section in README.md).
 $SUDO apt-get install -y \
     clang \
     curl \
     unzip \
     libx11-dev \
-    libgl1-mesa-dev
+    libgl1-mesa-dev \
+    libsqlite3-dev
 
 # Skip the download if exactly this version is already installed.
 if command -v odin >/dev/null 2>&1 && odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then

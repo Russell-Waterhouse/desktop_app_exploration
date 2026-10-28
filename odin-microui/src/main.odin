@@ -85,8 +85,30 @@ main :: proc() {
 	ctx.text_width = text_width
 	ctx.text_height = text_height
 
-	recipes := RECIPES
-	selected := 0
+	// Load from SQLite, seeding from recipes.odin on first run.
+	// A load failure leaves recipes empty and db_error set, and
+	// the detail pane shows that error instead of crashing,
+	// like the Rust version.
+	recipes: []Recipe
+	db_error := ""
+	db, db_open_err := open_database("recipes.db")
+	defer close_database(db)
+	if db_open_err != "" {
+		db_error = db_open_err
+	} else if err := ensure_schema_and_seed(db, RECIPES[:]); err != "" {
+		db_error = err
+	} else {
+		loaded, load_err := load_recipes(db)
+		if load_err != "" {
+			db_error = load_err
+		} else {
+			recipes = loaded
+		}
+	}
+	selected := -1
+	if len(recipes) > 0 {
+		selected = 0
+	}
 	search_buf: [256]u8
 	search_len := 0
 
@@ -163,7 +185,10 @@ main :: proc() {
 		// filtering the list does not change the detail.
 		if mu.begin_window(ctx, "Detail", mu.Rect{300, 10, 590, 580}, {.NO_CLOSE}) {
 			mu.layout_row(ctx, {-1}, 0)
-			if selected >= 0 && selected < len(recipes) {
+			if db_error != "" {
+				mu.label(ctx, "Database error:")
+				draw_wrapped(ctx, db_error, 550)
+			} else if selected >= 0 && selected < len(recipes) {
 				recipe := recipes[selected]
 				mu.label(ctx, recipe.title)
 				draw_wrapped(ctx, recipe.description, 550)

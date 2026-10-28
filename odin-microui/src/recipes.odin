@@ -1,10 +1,13 @@
 package main
 
-// Static recipe data, matching the seed data used by the Rust
-// version's recipe view (rust-egui/src/seed.rs): the same three
-// recipes, in the same order, with the same ingredients and steps.
-// No disk, network, or database yet — this is the static-data
-// recipe-view step, before add/edit/delete and SQLite.
+// Seed data for the SQLite database (db.odin), matching the
+// seed data used by the Rust version (rust-egui/src/seed.rs):
+// the same three recipes, in the same order, with the same
+// ingredients and steps. At runtime the app loads from
+// recipes.db, not from here; this is only inserted once, when
+// the recipes table is empty. id is left at 0 (the database
+// assigns it) and image_path at "" (inserted as NULL, until
+// the image step sets it).
 //
 // Note on layout: the ingredient and step arrays are package-level
 // globals, and each recipe holds a slice into its own arrays.
@@ -22,11 +25,13 @@ Ingredient :: struct {
 }
 
 Recipe :: struct {
+	id:           i64,
 	title:        string,
 	description:  string,
 	servings:     int,
 	prep_minutes: int,
 	cook_minutes: int,
+	image_path:   string,
 	ingredients:  []Ingredient,
 	steps:        []string,
 	notes:        string,
