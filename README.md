@@ -51,3 +51,7 @@ Build the same application in all these languages/tech stacks and see what works
 Recipe manager. See `plan.md` for the full spec.
 
 The same app in each stack: recipe list and detail views, add/edit/delete, and search — covering text, images, buttons, animations, network import (recipe JSON and images from URLs), raw-file import/export, SQLite storage, multi-encoding text import, and complex-text rendering (Arabic, emoji, Devanagari, and Simplified Chinese).
+
+## Out of scope
+
+Packaging and distribution are explicitly not handled. The assumption is that if a stack can build a binary that runs, it could be signed and distributed and an installer made for it.
