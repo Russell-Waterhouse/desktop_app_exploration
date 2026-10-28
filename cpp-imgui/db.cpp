@@ -42,8 +42,6 @@ std::vector<Recipe> seed_recipes() {
             "Banana Bread",
             "A classic loaf, best with very ripe bananas.",
             8,
-            15,
-            60,
             "",
             {
                 {"3", "", "ripe bananas, mashed"},
@@ -68,8 +66,6 @@ std::vector<Recipe> seed_recipes() {
             "Tomato Basil Pasta",
             "A quick weeknight pasta with fresh tomatoes and basil.",
             4,
-            10,
-            20,
             "",
             {
                 {"12", "oz", "pasta"},
@@ -92,8 +88,6 @@ std::vector<Recipe> seed_recipes() {
             "Chicken Stir Fry",
             "Chicken and vegetables in a simple soy-ginger sauce, served with rice.",
             4,
-            15,
-            15,
             "",
             {
                 {"1 1/2", "lbs", "chicken breast, sliced"},
@@ -126,8 +120,8 @@ bool insert_seed(sqlite3* db, std::string& error) {
 
     if (sqlite3_prepare_v2(db,
                            "INSERT INTO recipes (title, description, servings, "
-                           "prep_minutes, cook_minutes, image_path, notes) "
-                           "VALUES (?, ?, ?, ?, ?, NULL, ?);",
+                           "image_path, notes) "
+                           "VALUES (?, ?, ?, NULL, ?);",
                            -1, &recipe_stmt, nullptr) != SQLITE_OK ||
         sqlite3_prepare_v2(db,
                            "INSERT INTO ingredients (recipe_id, position, amount, "
@@ -148,9 +142,7 @@ bool insert_seed(sqlite3* db, std::string& error) {
             if (!bind_text(recipe_stmt, 1, recipe.title) ||
                 !bind_text(recipe_stmt, 2, recipe.description) ||
                 sqlite3_bind_int(recipe_stmt, 3, recipe.servings) != SQLITE_OK ||
-                sqlite3_bind_int(recipe_stmt, 4, recipe.prep_minutes) != SQLITE_OK ||
-                sqlite3_bind_int(recipe_stmt, 5, recipe.cook_minutes) != SQLITE_OK ||
-                !bind_text(recipe_stmt, 6, recipe.notes) ||
+                !bind_text(recipe_stmt, 4, recipe.notes) ||
                 !step_done(recipe_stmt, error, db)) {
                 ok = false;
                 break;
@@ -221,8 +213,6 @@ bool init_and_seed(sqlite3* db, std::string& error) {
                   "title TEXT NOT NULL, "
                   "description TEXT NOT NULL DEFAULT '', "
                   "servings INTEGER NOT NULL, "
-                  "prep_minutes INTEGER NOT NULL, "
-                  "cook_minutes INTEGER NOT NULL, "
                   "image_path TEXT, "
                   "notes TEXT NOT NULL DEFAULT '');",
                   error) ||
@@ -272,8 +262,8 @@ bool load_recipes(sqlite3* db, std::vector<Recipe>& recipes, std::string& error)
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db,
-                           "SELECT id, title, description, servings, prep_minutes, "
-                           "cook_minutes, image_path, notes FROM recipes ORDER BY id;",
+                           "SELECT id, title, description, servings, "
+                           "image_path, notes FROM recipes ORDER BY id;",
                            -1, &stmt, nullptr) != SQLITE_OK) {
         error = sqlite3_errmsg(db);
         return false;
@@ -284,10 +274,8 @@ bool load_recipes(sqlite3* db, std::vector<Recipe>& recipes, std::string& error)
         recipe.title = column_text(stmt, 1);
         recipe.description = column_text(stmt, 2);
         recipe.servings = sqlite3_column_int(stmt, 3);
-        recipe.prep_minutes = sqlite3_column_int(stmt, 4);
-        recipe.cook_minutes = sqlite3_column_int(stmt, 5);
-        recipe.image_path = column_text(stmt, 6);
-        recipe.notes = column_text(stmt, 7);
+        recipe.image_path = column_text(stmt, 4);
+        recipe.notes = column_text(stmt, 5);
         recipes.push_back(recipe);
     }
     sqlite3_finalize(stmt);

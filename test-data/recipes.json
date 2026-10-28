@@ -4,8 +4,6 @@
       "title": "Fried Chicken",
       "description": "Crisp buttermilk fried chicken with a seasoned flour coating.",
       "servings": 4,
-      "prep_minutes": 20,
-      "cook_minutes": 25,
       "image_path": null,
       "notes": "Keep the oil at 350°F and do not crowd the pan, or the coating will go soggy.",
       "ingredients": [
@@ -67,8 +65,6 @@
       "title": "Lasagna",
       "description": "Layered pasta with a beef-tomato sauce, ricotta, and melted mozzarella.",
       "servings": 8,
-      "prep_minutes": 30,
-      "cook_minutes": 45,
       "image_path": null,
       "notes": "Resting for 10 minutes before slicing keeps the layers from sliding apart.",
       "ingredients": [
@@ -135,8 +131,6 @@
       "title": "Butter Tarts",
       "description": "Canadian butter tarts with flaky pastry and a gooey brown sugar and maple filling.",
       "servings": 12,
-      "prep_minutes": 20,
-      "cook_minutes": 20,
       "image_path": null,
       "notes": "The centres should still be slightly wobbly when they come out of the oven; they set as they cool.",
       "ingredients": [

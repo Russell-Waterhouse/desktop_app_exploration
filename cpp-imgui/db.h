@@ -23,8 +23,6 @@ struct Recipe {
     std::string title;
     std::string description;
     int servings = 0;
-    int prep_minutes = 0;
-    int cook_minutes = 0;
     std::string image_path;
     std::vector<Ingredient> ingredients;
     std::vector<std::string> steps;

@@ -120,8 +120,7 @@ int main(int, char**) {
             const Recipe& recipe = recipes[selected];
             ImGui::Text("%s", recipe.title.c_str());
             ImGui::TextWrapped("%s", recipe.description.c_str());
-            ImGui::Text("Servings: %d  |  Prep: %d min  |  Cook: %d min",
-                        recipe.servings, recipe.prep_minutes, recipe.cook_minutes);
+            ImGui::Text("Servings: %d", recipe.servings);
             ImGui::Separator();
             ImGui::Text("[No image yet]");
             ImGui::Separator();

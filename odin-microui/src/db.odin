@@ -24,8 +24,7 @@ import "core:strings"
 // the Rust version, whose SQLite is statically bundled.
 //
 // Schema matches the Rust version (rust-egui/src/db.rs):
-// recipes (id, title, description, servings, prep_minutes,
-// cook_minutes, image_path, notes), ingredients (id, recipe_id,
+// recipes (id, title, description, servings, image_path, notes), ingredients (id, recipe_id,
 // position, amount, unit, name), steps (id, recipe_id, position,
 // text), with foreign keys on. The database file, recipes.db,
 // is created in the current working directory on first run
@@ -143,8 +142,6 @@ ensure_schema_and_seed :: proc(db: ^Sqlite_Db, seed: []Recipe) -> string {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL,
 			servings INTEGER NOT NULL,
-			prep_minutes INTEGER NOT NULL,
-			cook_minutes INTEGER NOT NULL,
 			image_path TEXT,
 			notes TEXT NOT NULL
 		);
@@ -191,8 +188,8 @@ ensure_schema_and_seed :: proc(db: ^Sqlite_Db, seed: []Recipe) -> string {
 	seed_err := ""
 	for recipe in seed {
 		rstmt, rerr := prepare(db, `INSERT INTO recipes
-			(title, description, servings, prep_minutes, cook_minutes, image_path, notes)
-			VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`)
+			(title, description, servings, image_path, notes)
+			VALUES (?1, ?2, ?3, ?4, ?5)`)
 		if rerr != "" {
 			seed_failed, seed_err = true, rerr
 			break
@@ -203,19 +200,15 @@ ensure_schema_and_seed :: proc(db: ^Sqlite_Db, seed: []Recipe) -> string {
 			seed_failed, seed_err = true, e
 		} else if rc := sqlite3_bind_int64(rstmt, 3, i64(recipe.servings)); rc != SQLITE_OK {
 			seed_failed, seed_err = true, "bind servings"
-		} else if rc := sqlite3_bind_int64(rstmt, 4, i64(recipe.prep_minutes)); rc != SQLITE_OK {
-			seed_failed, seed_err = true, "bind prep_minutes"
-		} else if rc := sqlite3_bind_int64(rstmt, 5, i64(recipe.cook_minutes)); rc != SQLITE_OK {
-			seed_failed, seed_err = true, "bind cook_minutes"
 		} else if recipe.image_path == "" {
-			if rc := sqlite3_bind_null(rstmt, 6); rc != SQLITE_OK {
+			if rc := sqlite3_bind_null(rstmt, 4); rc != SQLITE_OK {
 				seed_failed, seed_err = true, "bind image_path"
 			}
-		} else if e := bind_str(rstmt, 6, recipe.image_path); e != "" {
+		} else if e := bind_str(rstmt, 4, recipe.image_path); e != "" {
 			seed_failed, seed_err = true, e
 		}
 		if !seed_failed {
-			if e := bind_str(rstmt, 7, recipe.notes); e != "" {
+			if e := bind_str(rstmt, 5, recipe.notes); e != "" {
 				seed_failed, seed_err = true, e
 			}
 		}
@@ -296,8 +289,8 @@ ensure_schema_and_seed :: proc(db: ^Sqlite_Db, seed: []Recipe) -> string {
 }
 
 load_recipes :: proc(db: ^Sqlite_Db) -> ([]Recipe, string) {
-	stmt, err := prepare(db, `SELECT id, title, description, servings, prep_minutes,
-		cook_minutes, image_path, notes FROM recipes ORDER BY id`)
+	stmt, err := prepare(db, `SELECT id, title, description, servings,
+		image_path, notes FROM recipes ORDER BY id`)
 	if err != "" {
 		return nil, err
 	}
@@ -308,10 +301,8 @@ load_recipes :: proc(db: ^Sqlite_Db) -> ([]Recipe, string) {
 			title        = column_string(stmt, 1),
 			description  = column_string(stmt, 2),
 			servings     = int(sqlite3_column_int(stmt, 3)),
-			prep_minutes = int(sqlite3_column_int(stmt, 4)),
-			cook_minutes = int(sqlite3_column_int(stmt, 5)),
-			image_path   = column_string(stmt, 6),
-			notes        = column_string(stmt, 7),
+			image_path   = column_string(stmt, 4),
+			notes        = column_string(stmt, 5),
 		})
 	}
 	sqlite3_finalize(stmt)

@@ -192,10 +192,7 @@ main :: proc() {
 				recipe := recipes[selected]
 				mu.label(ctx, recipe.title)
 				draw_wrapped(ctx, recipe.description, 550)
-				mu.label(ctx, fmt.tprintf(
-					"Servings: %d  |  Prep: %d min  |  Cook: %d min",
-					recipe.servings, recipe.prep_minutes, recipe.cook_minutes,
-				))
+				mu.label(ctx, fmt.tprintf("Servings: %d", recipe.servings))
 				mu.label(ctx, "[No image yet]")
 				mu.label(ctx, "Ingredients")
 				for ingredient in recipe.ingredients {

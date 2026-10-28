@@ -19,8 +19,6 @@ struct Recipe {
     title: String,
     description: String,
     servings: i64,
-    prep_minutes: i64,
-    cook_minutes: i64,
     image_path: Option<String>,
     ingredients: Vec<Ingredient>,
     steps: Vec<String>,
@@ -34,8 +32,6 @@ struct EditDraft {
     title: String,
     description: String,
     servings_text: String,
-    prep_text: String,
-    cook_text: String,
     image_path: String,
     ingredients: Vec<Ingredient>,
     steps: Vec<String>,
@@ -49,8 +45,6 @@ impl EditDraft {
             title: recipe.title.clone(),
             description: recipe.description.clone(),
             servings_text: recipe.servings.to_string(),
-            prep_text: recipe.prep_minutes.to_string(),
-            cook_text: recipe.cook_minutes.to_string(),
             image_path: recipe.image_path.clone().unwrap_or_default(),
             ingredients: recipe.ingredients.clone(),
             steps: recipe.steps.clone(),
@@ -64,8 +58,6 @@ impl EditDraft {
             title: String::new(),
             description: String::new(),
             servings_text: String::new(),
-            prep_text: String::new(),
-            cook_text: String::new(),
             image_path: String::new(),
             ingredients: Vec::new(),
             steps: Vec::new(),
@@ -89,8 +81,6 @@ impl EditDraft {
             title: title.to_string(),
             description: self.description.clone(),
             servings: parse_number(&self.servings_text, "Servings")?,
-            prep_minutes: parse_number(&self.prep_text, "Prep time")?,
-            cook_minutes: parse_number(&self.cook_text, "Cook time")?,
             image_path: {
                 let path = self.image_path.trim();
                 if path.is_empty() {
@@ -290,10 +280,6 @@ impl eframe::App for RecipeApp {
                     ui.text_edit_multiline(&mut draft.description);
                     ui.label("Servings:");
                     ui.text_edit_singleline(&mut draft.servings_text);
-                    ui.label("Prep time (minutes):");
-                    ui.text_edit_singleline(&mut draft.prep_text);
-                    ui.label("Cook time (minutes):");
-                    ui.text_edit_singleline(&mut draft.cook_text);
                     ui.label("Image path:");
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut draft.image_path);
@@ -433,10 +419,7 @@ impl eframe::App for RecipeApp {
                 if let Some(recipe) = self.selected_recipe().cloned() {
                     ui.heading(&recipe.title);
                     ui.label(&recipe.description);
-                    ui.label(format!(
-                        "Servings: {}  •  Prep: {} min  •  Cook: {} min",
-                        recipe.servings, recipe.prep_minutes, recipe.cook_minutes
-                    ));
+                    ui.label(format!("Servings: {}", recipe.servings));
                     if let Some(path) = &recipe.image_path {
                         if let Some(texture) = self.textures.get(path).cloned() {
                             ui.add(

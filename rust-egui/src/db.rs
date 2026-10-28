@@ -15,8 +15,6 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
              title TEXT NOT NULL,
              description TEXT NOT NULL,
              servings INTEGER NOT NULL,
-             prep_minutes INTEGER NOT NULL,
-             cook_minutes INTEGER NOT NULL,
              image_path TEXT,
              notes TEXT NOT NULL
          );
@@ -73,14 +71,12 @@ pub(crate) fn load_recipes() -> rusqlite::Result<Vec<Recipe>> {
         let tx = conn.transaction()?;
         for recipe in seed::seed_recipes() {
             tx.execute(
-                "INSERT INTO recipes (title, description, servings, prep_minutes, cook_minutes, image_path, notes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+                "INSERT INTO recipes (title, description, servings, image_path, notes)
+                 VALUES (?1, ?2, ?3, NULL, ?4)",
                 params![
                     recipe.title,
                     recipe.description,
                     recipe.servings,
-                    recipe.prep_minutes,
-                    recipe.cook_minutes,
                     recipe.notes
                 ],
             )?;
@@ -92,10 +88,10 @@ pub(crate) fn load_recipes() -> rusqlite::Result<Vec<Recipe>> {
 
     // Collect recipe metadata first, so the statement is dropped
     // before querying ingredients and steps for each recipe.
-    let mut meta: Vec<(i64, String, String, i64, i64, i64, Option<String>, String)> = Vec::new();
+    let mut meta: Vec<(i64, String, String, i64, Option<String>, String)> = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT id, title, description, servings, prep_minutes, cook_minutes, image_path, notes
+            "SELECT id, title, description, servings, image_path, notes
              FROM recipes ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -104,10 +100,8 @@ pub(crate) fn load_recipes() -> rusqlite::Result<Vec<Recipe>> {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
         for row in rows {
@@ -116,7 +110,7 @@ pub(crate) fn load_recipes() -> rusqlite::Result<Vec<Recipe>> {
     }
 
     let mut recipes = Vec::new();
-    for (id, title, description, servings, prep_minutes, cook_minutes, image_path, notes) in meta {
+    for (id, title, description, servings, image_path, notes) in meta {
         let mut ingredients = Vec::new();
         {
             let mut stmt = conn.prepare(
@@ -149,8 +143,6 @@ pub(crate) fn load_recipes() -> rusqlite::Result<Vec<Recipe>> {
             title,
             description,
             servings,
-            prep_minutes,
-            cook_minutes,
             image_path,
             ingredients,
             steps,
@@ -165,14 +157,12 @@ pub(crate) fn insert_recipe(recipe: &Recipe) -> rusqlite::Result<i64> {
     ensure_schema(&conn)?;
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO recipes (title, description, servings, prep_minutes, cook_minutes, image_path, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO recipes (title, description, servings, image_path, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             recipe.title,
             recipe.description,
             recipe.servings,
-            recipe.prep_minutes,
-            recipe.cook_minutes,
             recipe.image_path,
             recipe.notes
         ],
@@ -189,14 +179,12 @@ pub(crate) fn update_recipe(recipe: &Recipe) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     tx.execute(
         "UPDATE recipes SET title = ?1, description = ?2, servings = ?3,
-         prep_minutes = ?4, cook_minutes = ?5, image_path = ?6, notes = ?7
-         WHERE id = ?8",
+         image_path = ?4, notes = ?5
+         WHERE id = ?6",
         params![
             recipe.title,
             recipe.description,
             recipe.servings,
-            recipe.prep_minutes,
-            recipe.cook_minutes,
             recipe.image_path,
             recipe.notes,
             recipe.id
@@ -243,8 +231,6 @@ mod tests {
             title: "Test Soup".to_string(),
             description: "Test".to_string(),
             servings: 2,
-            prep_minutes: 5,
-            cook_minutes: 10,
             image_path: None,
             ingredients: vec![Ingredient {
                 amount: "1".to_string(),
