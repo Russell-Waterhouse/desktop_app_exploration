@@ -4,7 +4,8 @@ Zig + DVUI version of the recipe manager test app, currently
 the recipe view: a 900x600 window titled "Recipe Manager".
 
 DVUI's current main is tested with Zig v0.17.0, so that version
-is pinned in `install_ubuntu.sh` and in `build.zig.zon`.
+is pinned in `install_ubuntu.sh`, `install_fedora.sh`, and in
+`build.zig.zon`.
 The backend is SDL2 (`dvui_sdl2`): DVUI's SDL2 Zig package
 builds against system X11 headers, which keeps the dependency
 tree much smaller than the SDL3 backend's.
@@ -30,12 +31,13 @@ first build then also fetches DVUI's own dependencies (SDL,
 translate-c, freetype, tree-sitter, svg2tvg, etc.), so it
 needs network access.
 
-Fedora (target platform, package names only — not yet tested here):
+Fedora (not yet tested here — `install_fedora.sh` is the Fedora
+equivalent of `install_ubuntu.sh`):
 
 ```sh
-# Same Zig 0.17.0 tarball as install_ubuntu.sh, plus:
-sudo dnf install curl xz git
-# plus the X11/GL development packages the SDL2 backend needs
+./install_fedora.sh
+./build_linux.sh
+./zig-out/bin/zig-dvui
 ```
 
 `zig-out/`, `.zig-cache/` and `zig-pkg/` are git-ignored.

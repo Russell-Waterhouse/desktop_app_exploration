@@ -22,10 +22,11 @@ cmake --build build
 ./build/cpp-imgui
 ```
 
-Fedora (target platform, package names only — not yet tested here):
+Fedora (not yet tested here — `install_dependencies_fedora.sh`
+is the Fedora equivalent of `install_dependencies_ubuntu.sh`):
 
 ```sh
-sudo dnf install cmake gcc-c++ SDL2-devel mesa-libGL-devel sqlite-devel
+./install_dependencies_fedora.sh
 cmake -S . -B build
 cmake --build build
 ./build/cpp-imgui

@@ -95,7 +95,8 @@ Not yet: add/edit/delete, images, or any network/JSON work.
 This is the SQLite step, following the Rust order (recipe view,
 then SQLite, then edit/delete, then images).
 
-Odin dev-2026-10 is pinned in `install_ubuntu.sh`.
+Odin dev-2026-10 is pinned in `install_ubuntu.sh` and
+`install_fedora.sh`.
 
 ## Build
 
@@ -115,11 +116,13 @@ matters: Odin expects its `base/`, `core/` and `vendor/` folders
 next to the compiler binary, so symlinking the binary alone is
 not enough.
 
-Fedora (target platform, package names only — not yet tested here):
+Fedora (not yet tested here — `install_fedora.sh` is the Fedora
+equivalent of `install_ubuntu.sh`):
 
 ```sh
-# Same Odin dev-2026-10 release asset as install_ubuntu.sh, plus:
-sudo dnf install clang curl unzip libX11-devel mesa-libGL-devel sqlite-devel
+./install_fedora.sh
+./build_linux.sh
+./odin-microui
 ```
 
 The built `odin-microui` binary and `recipes.db` are git-ignored.
