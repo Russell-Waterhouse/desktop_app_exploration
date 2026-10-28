@@ -44,6 +44,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Rust Iced (`rust-iced/`)
 
@@ -78,6 +79,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## C/C++ Dear ImGui (`cpp-imgui/`)
 
@@ -112,6 +114,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## C/C++ GTK4 (`cpp-gtk4/`)
 
@@ -146,6 +149,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Odin Raylib + Raygui (`odin-raygui/`)
 
@@ -180,6 +184,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Odin microui (`odin-microui/`)
 
@@ -214,6 +219,7 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Zig DVUI (`zig-dvui/`)
 
@@ -248,3 +254,4 @@ has been tested on Fedora yet.
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
+- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
