@@ -11,8 +11,7 @@ app in this repo, so all stacks download the same data.
   and Butter Tarts (28 ingredients and 15 steps in total).
 
   Shape: `{"recipes": [...]}`. Each recipe has `title`,
-  `description`, `servings`, `prep_minutes`, `cook_minutes`,
-  `image_path` (null when there is no image), `notes`,
+  `description`, `servings`, `image_path` (null when there is no image), `notes`,
   `ingredients` (array of `amount`, `unit`, `name` objects, in order),
   and `steps` (array of strings, in order). Amounts are strings so
   fractions like `"1/2"` survive as written.

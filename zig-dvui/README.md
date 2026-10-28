@@ -53,7 +53,7 @@ Banana Bread, Tomato Basil Pasta, and Chicken Stir Fry
   The search filters the list only; the detail keeps showing
   the selected recipe even if it no longer matches the filter.
 - Right pane (scrollable): detail for the selected recipe —
-  description, servings/prep/cook, "[No image yet]",
+  description, servings, "[No image yet]",
   ingredients, numbered steps, and notes.
 
 ## Code

@@ -3,7 +3,7 @@
 Odin + microUI version of the recipe manager test app, currently
 a recipe view backed by SQLite: a left pane listing recipes with
 a title search box, and a right pane showing the selected
-recipe's detail (description, servings/prep/cook, "[No image
+recipe's detail (description, servings, "[No image
 yet]", ingredients, numbered steps, notes).
 
 microUI ships with Odin itself as `vendor:microui`, and it does
@@ -22,7 +22,7 @@ the Rust version's window size.
   a `> ` prefix. Filtering the list does not change the
   selection, so the detail pane keeps showing the selected recipe
   even when it is filtered out, like the Rust version.
-- **Detail pane** (right): title, description, servings/prep/cook,
+- **Detail pane** (right): title, description, servings,
   "[No image yet]", ingredients, numbered steps, notes. Long
   description, step and note text is wrapped by hand in
   `src/main.odin` (`draw_wrapped`, using raylib's MeasureText),
@@ -77,8 +77,7 @@ Consequences, compared with the Rust version:
   Check with `ldd odin-microui`: it links `libsqlite3.so`,
   whereas the Rust binary's SQLite is statically bundled.
 - **Schema matches Rust** (`rust-egui/src/db.rs`): recipes
-  (id, title, description, servings, prep_minutes,
-  cook_minutes, image_path, notes), ingredients (id, recipe_id,
+  (id, title, description, servings, image_path, notes), ingredients (id, recipe_id,
   position, amount, unit, name), steps (id, recipe_id, position,
   text), foreign keys on. Seed recipes are inserted with a
   NULL `image_path`, as in Rust, until the image step sets it.

@@ -23,8 +23,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [X] edit recipe
 - [X] delete recipe
 - [X] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [X] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [X] recipe detail: description, servings, ingredients, numbered steps, notes
 - [X] display images (list thumbnails and detail photo)
 - [X] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -51,8 +50,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [ ] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -79,8 +77,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [X] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [X] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [X] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -107,8 +104,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [ ] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -135,8 +131,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [ ] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -163,8 +158,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [X] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [X] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [X] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions
@@ -191,8 +185,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`, and
 - [ ] edit recipe
 - [ ] delete recipe
 - [X] recipe list: title, search by title
-- [ ] recipe list: prep/cook time
-- [X] recipe detail: description, servings, prep/cook time, ingredients, numbered steps, notes
+- [X] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
 - [ ] display animations: list/detail transitions

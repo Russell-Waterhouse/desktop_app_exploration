@@ -54,7 +54,7 @@ Recipe manager. The same app will be built in each language/tech stack.
 
 ### Core features
 
-- Recipe list: thumbnail, title, prep/cook time, search by title
+- Recipe list: thumbnail, title, search by title
 - Recipe detail: photo, description, ingredients, numbered steps, notes
 - Add, edit, and delete recipes
 
@@ -70,7 +70,7 @@ Recipe manager. The same app will be built in each language/tech stack.
 
 ### Data model
 
-- Recipe: title, description, servings, prep time, cook time, image path
+- Recipe: title, description, servings, image path
 - Ingredient: recipe, position, amount, unit, name
 - Step: recipe, position, text
 
