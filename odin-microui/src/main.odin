@@ -1,12 +1,14 @@
 package main
 
+import "core:fmt"
 import "core:strings"
+import "core:unicode/utf8"
 
 import mu "vendor:microui"
 import rl "vendor:raylib"
 
 FONT_SIZE :: 20
-WINDOW_WIDTH :: 800
+WINDOW_WIDTH :: 900
 WINDOW_HEIGHT :: 600
 
 // microUI only measures and emits draw commands; raylib does the
@@ -25,6 +27,55 @@ to_rl_color :: proc(c: mu.Color) -> rl.Color {
 	return rl.Color{c.r, c.g, c.b, c.a}
 }
 
+// Feed one raylib key into microUI as a pressed/released key.
+// microUI clears the pressed bits at the end of each frame, so a
+// key pressed this frame is seen exactly once.
+feed_key :: proc(ctx: ^mu.Context, rl_key: rl.KeyboardKey, mu_key: mu.Key) {
+	if rl.IsKeyPressed(rl_key) {
+		mu.input_key_down(ctx, mu_key)
+	}
+	if rl.IsKeyReleased(rl_key) {
+		mu.input_key_up(ctx, mu_key)
+	}
+}
+
+// Wrap a paragraph into label lines that fit the detail pane.
+// microUI's own mu.text wrapping does not line up with raylib's
+// default-font measurements here (it wrapped some steps and
+// clipped others at the pane edge), so wrap explicitly with
+// MeasureText instead, at a conservative width inside the pane.
+draw_wrapped :: proc(ctx: ^mu.Context, text: string, max_width: i32) {
+	words := strings.split(text, " ", context.temp_allocator)
+	current := ""
+	for word in words {
+		candidate := word
+		if current != "" {
+			candidate = fmt.tprintf("%s %s", current, word)
+		}
+		if current != "" && text_width(nil, candidate) > max_width {
+			mu.label(ctx, current)
+			current = word
+		} else {
+			current = candidate
+		}
+	}
+	if current != "" {
+		mu.label(ctx, current)
+	}
+}
+
+// Case-insensitive title search, like the Rust version: an empty
+// query matches everything, otherwise the title must contain it.
+matches_search :: proc(title, query: string) -> bool {
+	if len(query) == 0 {
+		return true
+	}
+	return strings.contains(
+		strings.to_lower(title, context.temp_allocator),
+		strings.to_lower(query, context.temp_allocator),
+	)
+}
+
 main :: proc() {
 	// microUI's context is ~270 KB of fixed-size state, so it lives
 	// on the heap, not the stack.
@@ -34,7 +85,12 @@ main :: proc() {
 	ctx.text_width = text_width
 	ctx.text_height = text_height
 
-	rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Hello world")
+	recipes := RECIPES
+	selected := 0
+	search_buf: [256]u8
+	search_len := 0
+
+	rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Recipe Manager")
 	rl.SetTargetFPS(60)
 	defer rl.CloseWindow()
 
@@ -51,13 +107,94 @@ main :: proc() {
 		if wheel := rl.GetMouseWheelMove(); wheel != 0 {
 			mu.input_scroll(ctx, 0, i32(wheel * 20))
 		}
+		// Typed characters go to microUI's text input (the search box).
+		for ch := rl.GetCharPressed(); ch != 0; ch = rl.GetCharPressed() {
+			buf, n := utf8.encode_rune(ch)
+			mu.input_text(ctx, string(buf[:n]))
+		}
+		// Keys microUI's textbox understands.
+		feed_key(ctx, .BACKSPACE, .BACKSPACE)
+		feed_key(ctx, .DELETE, .DELETE)
+		feed_key(ctx, .LEFT, .LEFT)
+		feed_key(ctx, .RIGHT, .RIGHT)
+		feed_key(ctx, .HOME, .HOME)
+		feed_key(ctx, .END, .END)
+		feed_key(ctx, .ENTER, .RETURN)
+		feed_key(ctx, .LEFT_SHIFT, .SHIFT)
+		feed_key(ctx, .RIGHT_SHIFT, .SHIFT)
+		feed_key(ctx, .LEFT_CONTROL, .CTRL)
+		feed_key(ctx, .RIGHT_CONTROL, .CTRL)
+		feed_key(ctx, .LEFT_ALT, .ALT)
+		feed_key(ctx, .RIGHT_ALT, .ALT)
+		feed_key(ctx, .A, .A)
+		feed_key(ctx, .X, .X)
+		feed_key(ctx, .C, .C)
+		feed_key(ctx, .V, .V)
+
+		query := string(search_buf[:search_len])
 
 		mu.begin(ctx)
-		if mu.begin_window(ctx, "Hello world", mu.Rect{50, 50, 400, 200}) {
+
+		// Left pane: recipe list with title search. Close is
+		// disabled so a pane cannot be lost by clicking its X;
+		// the panes can still be dragged and resized.
+		if mu.begin_window(ctx, "Recipes", mu.Rect{10, 10, 280, 580}, {.NO_CLOSE}) {
 			mu.layout_row(ctx, {-1}, 0)
-			mu.label(ctx, "Hello, world!")
+			mu.label(ctx, "Recipes")
+			mu.label(ctx, "Search recipes:")
+			mu.textbox(ctx, search_buf[:], &search_len)
+			for recipe, i in recipes {
+				if !matches_search(recipe.title, query) {
+					continue
+				}
+				label := recipe.title
+				if i == selected {
+					label = strings.concatenate({"> ", recipe.title}, context.temp_allocator)
+				}
+				if res := mu.button(ctx, label, .NONE, {}); .SUBMIT in res {
+					selected = i
+				}
+			}
 			mu.end_window(ctx)
 		}
+
+		// Right pane: detail for the selected recipe. The
+		// selection survives filtering, like the Rust version:
+		// filtering the list does not change the detail.
+		if mu.begin_window(ctx, "Detail", mu.Rect{300, 10, 590, 580}, {.NO_CLOSE}) {
+			mu.layout_row(ctx, {-1}, 0)
+			if selected >= 0 && selected < len(recipes) {
+				recipe := recipes[selected]
+				mu.label(ctx, recipe.title)
+				draw_wrapped(ctx, recipe.description, 550)
+				mu.label(ctx, fmt.tprintf(
+					"Servings: %d  |  Prep: %d min  |  Cook: %d min",
+					recipe.servings, recipe.prep_minutes, recipe.cook_minutes,
+				))
+				mu.label(ctx, "[No image yet]")
+				mu.label(ctx, "Ingredients")
+				for ingredient in recipe.ingredients {
+					if ingredient.unit == "" {
+						mu.label(ctx, fmt.tprintf("- %s %s", ingredient.amount, ingredient.name))
+					} else {
+						mu.label(ctx, fmt.tprintf("- %s %s %s", ingredient.amount, ingredient.unit, ingredient.name))
+					}
+				}
+				mu.label(ctx, "Steps")
+				for step, i in recipe.steps {
+					// Wrapped, not a single label: labels never
+					// wrap, so long steps were clipped at the
+					// pane edge.
+					draw_wrapped(ctx, fmt.tprintf("%d. %s", i + 1, step), 550)
+				}
+				mu.label(ctx, "Notes")
+				draw_wrapped(ctx, recipe.notes, 550)
+			} else {
+				mu.label(ctx, "No recipe selected.")
+			}
+			mu.end_window(ctx)
+		}
+
 		mu.end(ctx)
 
 		rl.BeginDrawing()
