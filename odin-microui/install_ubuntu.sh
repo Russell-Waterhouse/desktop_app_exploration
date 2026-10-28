@@ -60,11 +60,15 @@ for attempt in 1 2 3 4 5; do
 done
 
 # clang links Odin programs on Linux, curl downloads the release,
-# unzip/tar extract it (which one depends on the asset above).
+# unzip/tar extract it (which one depends on the asset above), and
+# the X11/GL development files are what the raylib window links
+# against (raylib itself ships prebuilt with Odin).
 $SUDO apt-get install -y \
     clang \
     curl \
-    unzip
+    unzip \
+    libx11-dev \
+    libgl1-mesa-dev
 
 # Skip the download if exactly this version is already installed.
 if command -v odin >/dev/null 2>&1 && odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then
@@ -129,4 +133,4 @@ if ! odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then
 fi
 
 echo "Installed: $(odin version)"
-echo "microUI ships with Odin as vendor:microui, so no extra library download is needed for the next step. Build with ./build_linux.sh"
+echo "microUI and raylib ship with Odin as vendor:microui and vendor:raylib. Build with ./build_linux.sh"
