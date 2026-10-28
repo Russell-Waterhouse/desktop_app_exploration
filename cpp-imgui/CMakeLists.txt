@@ -32,6 +32,14 @@ find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(SQLite3 REQUIRED)
 
+# SQLite3::SQLite3 was only added in CMake 4.3; older CMake
+# (including the 3.28 in this VM) only provides SQLite::SQLite3.
+# Alias the old name so the link line below can use the new,
+# non-deprecated name on every supported CMake version.
+if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+endif()
+
 add_executable(cpp-imgui
     main.cpp
     db.cpp
@@ -52,4 +60,4 @@ target_include_directories(cpp-imgui PRIVATE
     ${stb_SOURCE_DIR}
 )
 
-target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite::SQLite3 dl)
+target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite3::SQLite3 dl)
