@@ -33,6 +33,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -61,6 +63,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -89,6 +93,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -117,6 +123,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -145,6 +153,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -173,6 +183,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
@@ -201,6 +213,8 @@ has been tested on Fedora yet.
 - [ ] raw-file import: recipes as JSON, collection
 - [ ] raw-file export: recipes as JSON, single recipe
 - [ ] raw-file export: recipes as JSON, collection
+- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [ ] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling

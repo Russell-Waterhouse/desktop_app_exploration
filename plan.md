@@ -67,6 +67,8 @@ Recipe manager. The same app will be built in each language/tech stack.
 - Making a network call: import a recipe as JSON from a URL, and download a recipe image from a URL, both asynchronously with loading and error states and without blocking the UI
 - Interacting with disk as raw files: import and export recipes as JSON files (single recipe and collection), import an image file from disk, store recipe images as files on disk
 - Interacting with disk through SQLite: all recipe data lives in SQLite — recipes, ingredients, and steps; image files are referenced by path from the database
+- Detecting and parsing text in multiple encodings: imported recipe JSON may be UTF-8 (with or without BOM), UTF-16LE or UTF-16BE (with BOM), Windows-1252, or Shift_JIS; the app detects the encoding, parses the JSON, and stores equivalent UTF-8 in SQLite
+- Rendering complex text: recipe titles and descriptions in Arabic, emoji, Devanagari, and Simplified Chinese
 
 ### Data model
 
