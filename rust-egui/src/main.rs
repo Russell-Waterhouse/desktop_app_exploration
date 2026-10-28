@@ -126,7 +126,11 @@ impl eframe::App for RecipeApp {
 
         egui::Panel::left("recipe_list").show(ui, |ui| {
             ui.heading("Recipes");
-            ui.text_edit_singleline(&mut search);
+            ui.label("Search recipes:");
+            ui.add(
+                egui::TextEdit::singleline(&mut search)
+                    .hint_text("Type to filter recipes…"),
+            );
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let query = search.to_lowercase();
