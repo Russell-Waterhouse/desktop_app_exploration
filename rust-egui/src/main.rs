@@ -101,6 +101,9 @@ enum Mode {
     Editing { draft: EditDraft, is_new: bool },
 }
 
+// How long a list/detail transition takes, in seconds.
+const DETAIL_ANIM_SECONDS: f64 = 0.25;
+
 struct RecipeApp {
     recipes: Vec<Recipe>,
     selected_id: Option<i64>,
@@ -114,6 +117,14 @@ struct RecipeApp {
     // in this version; fine for a small test app.
     textures: HashMap<String, egui::TextureHandle>,
     texture_failures: HashSet<String>,
+    // List/detail transition state: which recipe the current fade
+    // is for, and the frame time it started at. egui's animate_bool
+    // cannot drive this on its own: a fresh animation id returns
+    // its target immediately, so the progress is tracked here from
+    // the frame time instead, and restarted whenever the selection
+    // changes (including the first recipe shown at startup).
+    detail_anim_start: f64,
+    detail_anim_for: Option<i64>,
 }
 
 // Load and cache a texture for an image file, once. Returns None
@@ -170,6 +181,8 @@ fn main() -> eframe::Result<()> {
                 confirming_delete: false,
                 textures: HashMap::new(),
                 texture_failures: HashSet::new(),
+                detail_anim_start: 0.0,
+                detail_anim_for: None,
             }))
         }),
     )
@@ -251,6 +264,27 @@ impl eframe::App for RecipeApp {
 
         self.selected_id = selected_id;
         self.search = search;
+
+        // List/detail transition progress, 0.0 (just changed) to 1.0
+        // (settled), eased so it starts fast and slows into place.
+        // Restarted whenever the selection changes; while it is
+        // running, keep asking for repaints, since egui otherwise
+        // only repaints on input and the animation would freeze
+        // on its first frame.
+        let now = ui.input(|input| input.time);
+        if self.detail_anim_for != self.selected_id {
+            self.detail_anim_for = self.selected_id;
+            self.detail_anim_start = now;
+        }
+        let detail_raw =
+            ((now - self.detail_anim_start) / DETAIL_ANIM_SECONDS) as f32;
+        let detail_fade = {
+            let t = detail_raw.clamp(0.0, 1.0);
+            1.0 - (1.0 - t).powi(3) // ease-out cubic
+        };
+        if detail_raw < 1.0 {
+            ui.ctx().request_repaint();
+        }
 
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -417,6 +451,12 @@ impl eframe::App for RecipeApp {
                 }
 
                 if let Some(recipe) = self.selected_recipe().cloned() {
+                    // The transition itself: fade the new detail in
+                    // while sliding it up into place (12px, shrinking
+                    // to 0 as it fades in). Applies to the viewing
+                    // detail only, not the edit form.
+                    ui.multiply_opacity(detail_fade);
+                    ui.add_space((1.0 - detail_fade) * 12.0);
                     ui.heading(&recipe.title);
                     ui.label(&recipe.description);
                     ui.label(format!("Servings: {}", recipe.servings));

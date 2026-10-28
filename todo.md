@@ -25,7 +25,7 @@ Fedora install scripts exist for `cpp-imgui`, `odin-microui`,
 - [X] recipe detail: description, servings, ingredients, numbered steps, notes
 - [X] display images (list thumbnails and detail photo)
 - [X] import image from a file and store image files on disk
-- [ ] display animations: list/detail transitions
+- [X] display animations: list/detail transitions
 - [ ] display animations: image loading state
 - [ ] network request import: recipe JSON from a URL, asynchronously, with loading and error states, without blocking the UI
 - [ ] network request import: recipe image from a URL, asynchronously, with loading and error states, without blocking the UI
