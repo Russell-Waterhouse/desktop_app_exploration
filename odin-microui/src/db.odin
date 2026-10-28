@@ -340,3 +340,190 @@ load_recipes :: proc(db: ^Sqlite_Db) -> ([]Recipe, string) {
 	}
 	return recipes[:], ""
 }
+
+// Insert a recipe's ingredients and steps, in position order.
+// Used by insert_recipe and update_recipe; the seed path in
+// ensure_schema_and_seed has its own inline copy, left alone.
+insert_children :: proc(db: ^Sqlite_Db, recipe_id: i64, recipe: Recipe) -> string {
+	for ingredient, i in recipe.ingredients {
+		stmt, err := prepare(db, `INSERT INTO ingredients
+			(recipe_id, position, amount, unit, name) VALUES (?1, ?2, ?3, ?4, ?5)`)
+		if err != "" {
+			return err
+		}
+		failed := ""
+		if rc := sqlite3_bind_int64(stmt, 1, recipe_id); rc != SQLITE_OK {
+			failed = "bind ingredient recipe_id"
+		} else if rc := sqlite3_bind_int64(stmt, 2, i64(i)); rc != SQLITE_OK {
+			failed = "bind ingredient position"
+		} else if e := bind_str(stmt, 3, ingredient.amount); e != "" {
+			failed = e
+		} else if e := bind_str(stmt, 4, ingredient.unit); e != "" {
+			failed = e
+		} else if e := bind_str(stmt, 5, ingredient.name); e != "" {
+			failed = e
+		} else if rc := sqlite3_step(stmt); rc != SQLITE_DONE {
+			failed = db_error(db, "inserting ingredient")
+		}
+		sqlite3_finalize(stmt)
+		if failed != "" {
+			return failed
+		}
+	}
+	for step, i in recipe.steps {
+		stmt, err := prepare(db, `INSERT INTO steps
+			(recipe_id, position, text) VALUES (?1, ?2, ?3)`)
+		if err != "" {
+			return err
+		}
+		failed := ""
+		if rc := sqlite3_bind_int64(stmt, 1, recipe_id); rc != SQLITE_OK {
+			failed = "bind step recipe_id"
+		} else if rc := sqlite3_bind_int64(stmt, 2, i64(i)); rc != SQLITE_OK {
+			failed = "bind step position"
+		} else if e := bind_str(stmt, 3, step); e != "" {
+			failed = e
+		} else if rc := sqlite3_step(stmt); rc != SQLITE_DONE {
+			failed = db_error(db, "inserting step")
+		}
+		sqlite3_finalize(stmt)
+		if failed != "" {
+			return failed
+		}
+	}
+	return ""
+}
+
+// Insert a new recipe (and its ingredients and steps) in one
+// transaction. Returns the new row id, like the Rust version's
+// insert_recipe. An empty image_path is stored as NULL.
+insert_recipe :: proc(db: ^Sqlite_Db, recipe: Recipe) -> (i64, string) {
+	if err := exec_sql(db, "BEGIN"); err != "" {
+		return 0, err
+	}
+	stmt, err := prepare(db, `INSERT INTO recipes
+		(title, description, servings, image_path, notes)
+		VALUES (?1, ?2, ?3, ?4, ?5)`)
+	if err != "" {
+		exec_sql(db, "ROLLBACK")
+		return 0, err
+	}
+	failed := ""
+	if e := bind_str(stmt, 1, recipe.title); e != "" {
+		failed = e
+	} else if e := bind_str(stmt, 2, recipe.description); e != "" {
+		failed = e
+	} else if rc := sqlite3_bind_int64(stmt, 3, i64(recipe.servings)); rc != SQLITE_OK {
+		failed = "bind servings"
+	} else if recipe.image_path == "" {
+		if rc := sqlite3_bind_null(stmt, 4); rc != SQLITE_OK {
+			failed = "bind image_path"
+		}
+	} else if e := bind_str(stmt, 4, recipe.image_path); e != "" {
+		failed = e
+	}
+	if failed == "" {
+		if e := bind_str(stmt, 5, recipe.notes); e != "" {
+			failed = e
+		}
+	}
+	if failed == "" {
+		if rc := sqlite3_step(stmt); rc != SQLITE_DONE {
+			failed = db_error(db, "inserting recipe")
+		}
+	}
+	sqlite3_finalize(stmt)
+	if failed != "" {
+		exec_sql(db, "ROLLBACK")
+		return 0, failed
+	}
+	recipe_id := sqlite3_last_insert_rowid(db)
+	if err := insert_children(db, recipe_id, recipe); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return 0, err
+	}
+	if err := exec_sql(db, "COMMIT"); err != "" {
+		return 0, err
+	}
+	return recipe_id, ""
+}
+
+// Update a recipe and replace its ingredients and steps, in
+// one transaction, like the Rust version's update_recipe.
+update_recipe :: proc(db: ^Sqlite_Db, recipe: Recipe) -> string {
+	if err := exec_sql(db, "BEGIN"); err != "" {
+		return err
+	}
+	stmt, err := prepare(db, `UPDATE recipes SET title = ?1,
+		description = ?2, servings = ?3, image_path = ?4, notes = ?5
+		WHERE id = ?6`)
+	if err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	failed := ""
+	if e := bind_str(stmt, 1, recipe.title); e != "" {
+		failed = e
+	} else if e := bind_str(stmt, 2, recipe.description); e != "" {
+		failed = e
+	} else if rc := sqlite3_bind_int64(stmt, 3, i64(recipe.servings)); rc != SQLITE_OK {
+		failed = "bind servings"
+	} else if recipe.image_path == "" {
+		if rc := sqlite3_bind_null(stmt, 4); rc != SQLITE_OK {
+			failed = "bind image_path"
+		}
+	} else if e := bind_str(stmt, 4, recipe.image_path); e != "" {
+		failed = e
+	}
+	if failed == "" {
+		if e := bind_str(stmt, 5, recipe.notes); e != "" {
+			failed = e
+		} else if rc := sqlite3_bind_int64(stmt, 6, recipe.id); rc != SQLITE_OK {
+			failed = "bind id"
+		} else if rc := sqlite3_step(stmt); rc != SQLITE_DONE {
+			failed = db_error(db, "updating recipe")
+		}
+	}
+	sqlite3_finalize(stmt)
+	if failed != "" {
+		exec_sql(db, "ROLLBACK")
+		return failed
+	}
+	// The id comes from our own loaded data, so formatting it
+	// into these statements is safe; it avoids three more binds.
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM ingredients WHERE recipe_id = %d", recipe.id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM steps WHERE recipe_id = %d", recipe.id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := insert_children(db, recipe.id, recipe); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	return exec_sql(db, "COMMIT")
+}
+
+// Delete a recipe and its ingredients and steps, in one
+// transaction. The schema has no ON DELETE CASCADE, so the
+// children are deleted explicitly, before the recipe row.
+delete_recipe :: proc(db: ^Sqlite_Db, id: i64) -> string {
+	if err := exec_sql(db, "BEGIN"); err != "" {
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM ingredients WHERE recipe_id = %d", id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM steps WHERE recipe_id = %d", id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM recipes WHERE id = %d", id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	return exec_sql(db, "COMMIT")
+}

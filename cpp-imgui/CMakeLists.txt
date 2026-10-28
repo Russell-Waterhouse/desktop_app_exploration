@@ -16,6 +16,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# stb_image for decoding image files (single header, no build
+# step). Shallow fetch of master: stb has no release tags, so
+# there is no version to pin to; the API used here
+# (stbi_load/stbi_image_free) has been stable for years.
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(stb)
+
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(SQLite3 REQUIRED)
@@ -23,10 +35,12 @@ find_package(SQLite3 REQUIRED)
 add_executable(cpp-imgui
     main.cpp
     db.cpp
+    images.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -34,6 +48,8 @@ add_executable(cpp-imgui
 target_include_directories(cpp-imgui PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
+    ${imgui_SOURCE_DIR}/misc/cpp
+    ${stb_SOURCE_DIR}
 )
 
 target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite::SQLite3 dl)

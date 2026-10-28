@@ -1,0 +1,10 @@
+[package]
+name = "rust-iced"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.14.0", features = ["image", "tokio"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+rfd = "0.17.2"
+rusqlite = { version = "0.41.0", features = ["bundled"] }

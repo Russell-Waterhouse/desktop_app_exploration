@@ -24,6 +24,15 @@ bool bind_text(sqlite3_stmt* stmt, int index, const std::string& value) {
            SQLITE_OK;
 }
 
+// Binds NULL for an empty value, matching rust-egui, which stores
+// NULL (not "") for a recipe with no image.
+bool bind_text_or_null(sqlite3_stmt* stmt, int index, const std::string& value) {
+    if (value.empty()) {
+        return sqlite3_bind_null(stmt, index) == SQLITE_OK;
+    }
+    return bind_text(stmt, index, value);
+}
+
 bool step_done(sqlite3_stmt* stmt, std::string& error, sqlite3* db) {
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
@@ -192,7 +201,179 @@ bool insert_seed(sqlite3* db, std::string& error) {
     return ok;
 }
 
+bool delete_children(sqlite3* db, long long recipe_id, std::string& error) {
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "DELETE FROM ingredients WHERE recipe_id = ?;",
+                           -1, &stmt, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, recipe_id);
+    bool ok = step_done(stmt, error, db);
+    sqlite3_finalize(stmt);
+    if (!ok) {
+        return false;
+    }
+    if (sqlite3_prepare_v2(db, "DELETE FROM steps WHERE recipe_id = ?;",
+                           -1, &stmt, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, recipe_id);
+    ok = step_done(stmt, error, db);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool insert_children(sqlite3* db, long long recipe_id, const Recipe& recipe,
+                     std::string& error) {
+    sqlite3_stmt* ingredient_stmt = nullptr;
+    sqlite3_stmt* step_stmt = nullptr;
+    bool ok = true;
+
+    if (sqlite3_prepare_v2(db,
+                           "INSERT INTO ingredients (recipe_id, position, amount, "
+                           "unit, name) VALUES (?, ?, ?, ?, ?);",
+                           -1, &ingredient_stmt, nullptr) != SQLITE_OK ||
+        sqlite3_prepare_v2(db,
+                           "INSERT INTO steps (recipe_id, position, text) "
+                           "VALUES (?, ?, ?);",
+                           -1, &step_stmt, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(db);
+        ok = false;
+    }
+
+    if (ok) {
+        for (int i = 0; i < static_cast<int>(recipe.ingredients.size()) && ok; ++i) {
+            const Ingredient& ingredient = recipe.ingredients[i];
+            sqlite3_reset(ingredient_stmt);
+            sqlite3_clear_bindings(ingredient_stmt);
+            if (sqlite3_bind_int64(ingredient_stmt, 1, recipe_id) != SQLITE_OK ||
+                sqlite3_bind_int(ingredient_stmt, 2, i) != SQLITE_OK ||
+                !bind_text(ingredient_stmt, 3, ingredient.amount) ||
+                !bind_text(ingredient_stmt, 4, ingredient.unit) ||
+                !bind_text(ingredient_stmt, 5, ingredient.name) ||
+                !step_done(ingredient_stmt, error, db)) {
+                ok = false;
+            }
+        }
+    }
+    if (ok) {
+        for (int i = 0; i < static_cast<int>(recipe.steps.size()) && ok; ++i) {
+            sqlite3_reset(step_stmt);
+            sqlite3_clear_bindings(step_stmt);
+            if (sqlite3_bind_int64(step_stmt, 1, recipe_id) != SQLITE_OK ||
+                sqlite3_bind_int(step_stmt, 2, i) != SQLITE_OK ||
+                !bind_text(step_stmt, 3, recipe.steps[i]) ||
+                !step_done(step_stmt, error, db)) {
+                ok = false;
+            }
+        }
+    }
+
+    sqlite3_finalize(ingredient_stmt);
+    sqlite3_finalize(step_stmt);
+    return ok;
+}
+
+// Runs body inside a transaction: BEGIN, then COMMIT on success
+// or ROLLBACK on failure. body returns false (with error set) on
+// failure.
+template <typename Body>
+bool in_transaction(sqlite3* db, Body body, std::string& error) {
+    if (!exec_sql(db, "BEGIN;", error)) {
+        return false;
+    }
+    bool ok = body();
+    std::string tail_error;
+    if (!exec_sql(db, ok ? "COMMIT;" : "ROLLBACK;", tail_error)) {
+        if (ok) {
+            error = tail_error;
+            return false;
+        }
+    }
+    return ok;
+}
+
 }  // namespace
+
+bool insert_recipe(sqlite3* db, const Recipe& recipe, long long& new_id,
+                   std::string& error) {
+    return in_transaction(db, [&]() {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                               "INSERT INTO recipes (title, description, servings, "
+                               "image_path, notes) VALUES (?, ?, ?, ?, ?);",
+                               -1, &stmt, nullptr) != SQLITE_OK) {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        bool ok = true;
+        if (!bind_text(stmt, 1, recipe.title) ||
+            !bind_text(stmt, 2, recipe.description) ||
+            sqlite3_bind_int(stmt, 3, recipe.servings) != SQLITE_OK ||
+            !bind_text_or_null(stmt, 4, recipe.image_path) ||
+            !bind_text(stmt, 5, recipe.notes) ||
+            !step_done(stmt, error, db)) {
+            ok = false;
+        }
+        sqlite3_finalize(stmt);
+        if (!ok) {
+            return false;
+        }
+        new_id = sqlite3_last_insert_rowid(db);
+        return insert_children(db, new_id, recipe, error);
+    }, error);
+}
+
+bool update_recipe(sqlite3* db, const Recipe& recipe, std::string& error) {
+    return in_transaction(db, [&]() {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                               "UPDATE recipes SET title = ?, description = ?, "
+                               "servings = ?, image_path = ?, notes = ? "
+                               "WHERE id = ?;",
+                               -1, &stmt, nullptr) != SQLITE_OK) {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        bool ok = true;
+        if (!bind_text(stmt, 1, recipe.title) ||
+            !bind_text(stmt, 2, recipe.description) ||
+            sqlite3_bind_int(stmt, 3, recipe.servings) != SQLITE_OK ||
+            !bind_text_or_null(stmt, 4, recipe.image_path) ||
+            !bind_text(stmt, 5, recipe.notes) ||
+            sqlite3_bind_int64(stmt, 6, recipe.id) != SQLITE_OK ||
+            !step_done(stmt, error, db)) {
+            ok = false;
+        }
+        sqlite3_finalize(stmt);
+        if (!ok) {
+            return false;
+        }
+        // Children are deleted and re-inserted, as in rust-egui.
+        return delete_children(db, recipe.id, error) &&
+               insert_children(db, recipe.id, recipe, error);
+    }, error);
+}
+
+bool delete_recipe(sqlite3* db, long long id, std::string& error) {
+    return in_transaction(db, [&]() {
+        if (!delete_children(db, id, error)) {
+            return false;
+        }
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, "DELETE FROM recipes WHERE id = ?;",
+                               -1, &stmt, nullptr) != SQLITE_OK) {
+            error = sqlite3_errmsg(db);
+            return false;
+        }
+        sqlite3_bind_int64(stmt, 1, id);
+        bool ok = step_done(stmt, error, db);
+        sqlite3_finalize(stmt);
+        return ok;
+    }, error);
+}
 
 bool open_database(const std::string& path, sqlite3** db, std::string& error) {
     if (sqlite3_open(path.c_str(), db) != SQLITE_OK) {

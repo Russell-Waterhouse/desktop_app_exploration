@@ -35,6 +35,22 @@ else
     SUDO=""
 fi
 
+# vendor:stb/image needs its C libraries compiled once: a fresh
+# Odin download ships vendor/stb/src/*.c but no vendor/stb/lib/*.a,
+# and the first build then fails with "Could not find the compiled
+# STB libraries". The image step uses vendor:stb/image, so build
+# the libraries if they are missing. Needs only a C compiler,
+# which the package install below already provides (clang); no
+# new system packages. Called both before the already-installed
+# early exit and at the end, so it runs whether Odin was already
+# there or was just downloaded.
+build_stb_if_needed() {
+    if [ -x /opt/odin/odin ] && [ ! -f /opt/odin/vendor/stb/lib/stb_image.a ]; then
+        echo "Building stb libraries (vendor:stb/image needs compiled libs)..."
+        (cd /opt/odin/vendor/stb/src && $SUDO sh build_stb.sh)
+    fi
+}
+
 case "$(uname -m)" in
     x86_64|amd64)
         ODIN_ARCH="amd64"
@@ -74,6 +90,8 @@ $SUDO timeout 600 dnf install -y \
     libX11-devel \
     mesa-libGL-devel \
     sqlite-devel
+
+build_stb_if_needed
 
 # Skip the download if exactly this version is already installed.
 if command -v odin >/dev/null 2>&1 && odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then
@@ -136,6 +154,8 @@ if ! odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then
     odin version >&2 || true
     exit 1
 fi
+
+build_stb_if_needed
 
 echo "Installed: $(odin version)"
 echo "microUI and raylib ship with Odin as vendor:microui and vendor:raylib. Build with ./build_linux.sh"

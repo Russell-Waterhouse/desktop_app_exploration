@@ -1,7 +1,10 @@
 # zig-dvui
 
-Zig + DVUI version of the recipe manager test app, currently
-the recipe view: a 900x600 window titled "Recipe Manager".
+Zig + DVUI version of the recipe manager test app, a 900x600
+window titled "Recipe Manager", at feature parity with the
+Rust (egui) version through the display-animation items:
+list/detail views, SQLite storage, add/edit/delete, image
+display and import, and both animations.
 
 DVUI's current main is tested with Zig v0.17.0, so that version
 is pinned in `install_ubuntu.sh`, `install_fedora.sh`, and in
@@ -42,7 +45,7 @@ equivalent of `install_ubuntu.sh`):
 
 `zig-out/`, `.zig-cache/` and `zig-pkg/` are git-ignored.
 
-## Recipe view
+## Features
 
 Recipes load from SQLite (`recipes.db` in the current working
 directory, git-ignored), seeded once on first run with the
@@ -52,22 +55,60 @@ Tomato Basil Pasta, and Chicken Stir Fry (19 ingredients,
 does not re-seed. A load failure is shown in the detail pane
 instead of crashing. No network yet.
 
-- Left pane: "Recipes", a title search box, and one button
-  per matching recipe. The selected recipe is marked "> ".
-  The search filters the list only; the detail keeps showing
-  the selected recipe even if it no longer matches the filter.
+- Left pane: "Recipes", a title search box, an "Add recipe"
+  button, and one row per matching recipe — a 32x32 thumbnail
+  (or a spinner while its image loads) plus a button. The
+  selected recipe is marked "> ". The search filters the list
+  only; the detail keeps showing the selected recipe even if
+  it no longer matches the filter. While the add/edit form is
+  open, list rows are labels, so a list click cannot discard
+  an in-progress edit.
 - Right pane (scrollable): detail for the selected recipe —
-  description, servings, "[No image yet]",
-  ingredients, numbered steps, and notes.
+  description, servings, image, ingredients, numbered steps,
+  notes, and Edit / Delete buttons. Delete asks for inline
+  confirmation ("Delete this recipe?" / "Yes, delete" /
+  "Cancel") before deleting.
+- Add/edit form (takes over the detail pane): title,
+  description, servings, image path, ingredients (amount,
+  unit, name, with Add/Remove rows), steps (with Add/Remove
+  rows), and notes. Save writes (title required, servings
+  must be a whole number) and selects the saved recipe;
+  Cancel discards. Rows are capped at 32 ingredients and 32
+  steps — plenty for a test app, and it keeps the form on
+  fixed buffers (see below).
+- Images: the detail photo is shown up to 400x300, the list
+  thumbnail at 32x32. A missing or undecodable image shows
+  "[Image could not be loaded: …]" in the detail pane (and
+  nothing in the list) and is not retried every frame.
+- Image import: DVUI has no native file picker, so the form
+  has an "Import image from file" row — a source-path text
+  field plus an Import button. Import copies the file into
+  `images/` (git-ignored, next to `recipes.db`), never
+  overwriting: a second import of the same filename gets a
+  `_1`, `_2` suffix, as in the Rust version. The stored copy's
+  path is then filled into the image-path field. A path can
+  also just be typed into the image-path field directly.
+- List/detail transition: the detail pane fades in over
+  0.25s (ease-out cubic) whenever the selection changes,
+  using DVUI's `AnimateWidget` (kind `.alpha`). DVUI's
+  animator has no kind that slides content (its `.vertical`
+  kind grows the height instead), so this stack fades without
+  the Rust version's 12px slide-up.
+- Image loading state: images decode on a worker thread
+  (`src/imageloader.zig`) and show a spinner while loading —
+  a 32px spinner in the list row and a spinner plus "Loading
+  image…" in the detail pane — so the UI stays responsive
+  while a large image loads. The texture itself is created on
+  the main thread, from the decoded pixels.
 
 ## Code
 
 - `src/main.zig` — a minimal `dvui.App`: `dvui_app` with
   `frameFn = appFrame`, which draws the two-pane recipe UI
   above. `main`, `panic` and the log function are all
-  DVUI's App-provided ones. The search text and selection are
-  the only mutable frame state; the recipes themselves come
-  from `db.zig`.
+  DVUI's App-provided ones. The search text, selection,
+  mode, and edit draft are the mutable frame state; the
+  recipes themselves come from `db.zig`.
 - `src/db.zig` — SQLite storage via the system SQLite C API
   (declared by hand with `extern fn`, since Zig 0.17 removed
   `@cImport`; linked with `linkSystemLibrary("sqlite3")` on
@@ -76,9 +117,57 @@ instead of crashing. No network yet.
   Schema matches the Rust and Odin versions (recipes,
   ingredients, steps, foreign keys on). Loading is lazy, once,
   on the first frame; one connection is held for the app's
-  lifetime.
+  lifetime. `insertRecipe`, `updateRecipe`, and `deleteRecipe`
+  run in transactions (children are deleted and re-inserted
+  on update, since the schema has no ON DELETE CASCADE);
+  callers `reload()` afterwards.
+- `src/images.zig` — image import: copies a file into
+  `images/` with `_1`/`_2` suffixes on collision, mirroring
+  `rust-egui/src/images.rs`.
+- `src/imageloader.zig` — asynchronous image loading. One
+  worker thread per image path decodes with stb_image (the
+  same decoder DVUI uses, via `dvui.c.stbi_load_from_memory`)
+  and reports through a mutex-guarded slot; the main thread
+  polls each frame, copies finished pixels into the
+  app-lifetime arena, and remembers failures. Decoded pixels
+  are shown with `dvui.image`'s `.pixels` source, whose
+  texture cache keys on the pixel pointer — the arena copy
+  keeps that pointer stable across frames.
 - `build.zig` — `b.dependency("dvui", .{ .backend = .sdl2 })`
   and imports `dvui_dep.module("dvui_sdl2")` as `"dvui"`.
+
+## DVUI wrinkles
+
+- Text entries own fixed buffers: a `textEntry` with
+  `.text = .{ .buffer = buf }` reads the buffer (up to the
+  first zero byte) every frame and writes edits into it, so
+  the add/edit draft is a struct of fixed buffers that the
+  form refills when it opens. Form texts are captured with
+  `textGet()` during drawing and used by Save in the same
+  frame.
+- The fade animation restarts per selection because the
+  `AnimateWidget`'s id carries the recipe id
+  (`.id_extra = recipe.id`): a new selection is a first
+  frame for a new widget id, and `AnimateWidget` starts its
+  animation on its first frame.
+- Ingredient amount/unit fields use default text-entry
+  sizing: overriding `min_size_content` with only a width
+  (height defaulting to 0) leaves the entry's text clipped
+  out of view, even though `textGet()` reports it correctly
+  — the box renders at row height but the text does not show.
+  Found by screenshot while debugging the edit form.
+- The worker thread never touches the shared arena (arena
+  allocators are not thread-safe): it allocates file and
+  pixel buffers from the page allocator, and the main thread
+  copies finished pixels into the arena and frees the worker
+  buffers. stb_image loads are reentrant; its failure-reason
+  string is the only shared stb state, and it is only read on
+  failure paths here.
+- A directly typed image path whose file changes on disk is
+  not re-decoded: the loader caches by path, and DVUI's
+  `.pixels` texture cache keys on the pixel pointer. Import
+  always writes a new (possibly suffixed) file, so imported
+  images do not hit this.
 
 ## AI-agent VM workaround
 
