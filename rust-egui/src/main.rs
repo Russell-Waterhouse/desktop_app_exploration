@@ -4,6 +4,7 @@ mod seed;
 
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{Receiver, channel};
 
 #[derive(Clone)]
 struct Ingredient {
@@ -117,6 +118,11 @@ struct RecipeApp {
     // in this version; fine for a small test app.
     textures: HashMap<String, egui::TextureHandle>,
     texture_failures: HashSet<String>,
+    // Images still decoding on a worker thread, keyed by image path.
+    // Decoding runs off the UI thread, so a large image never blocks
+    // the interface: while a path is in this map, the list and detail
+    // panes show a loading spinner for it instead of an image.
+    pending_textures: HashMap<String, Receiver<Result<egui::ColorImage, String>>>,
     // List/detail transition state: which recipe the current fade
     // is for, and the frame time it started at. egui's animate_bool
     // cannot drive this on its own: a fresh animation id returns
@@ -127,33 +133,18 @@ struct RecipeApp {
     detail_anim_for: Option<i64>,
 }
 
-// Load and cache a texture for an image file, once. Returns None
-// (and remembers the failure, so it is not retried every frame)
-// when the file is missing or cannot be decoded.
-fn texture_for(
-    ui: &mut egui::Ui,
-    textures: &mut HashMap<String, egui::TextureHandle>,
-    failures: &mut HashSet<String>,
-    path: &str,
-) -> Option<egui::TextureHandle> {
-    if let Some(texture) = textures.get(path) {
-        return Some(texture.clone());
-    }
-    if failures.contains(path) {
-        return None;
-    }
-    let rgba = image::open(path).ok()?.to_rgba8();
+// Decode one image file into an egui image. Runs on a worker thread;
+// the error is a string because the result crosses to the UI thread.
+fn decode_image(path: &str) -> Result<egui::ColorImage, String> {
+    let rgba = image::open(path)
+        .map_err(|err| err.to_string())?
+        .to_rgba8();
     let (width, height) = rgba.dimensions();
     let pixels = rgba.into_raw();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
         [width as usize, height as usize],
         &pixels,
-    );
-    let texture = ui
-        .ctx()
-        .load_texture(path, color_image, egui::TextureOptions::default());
-    textures.insert(path.to_string(), texture.clone());
-    Some(texture)
+    ))
 }
 
 fn main() -> eframe::Result<()> {
@@ -181,6 +172,7 @@ fn main() -> eframe::Result<()> {
                 confirming_delete: false,
                 textures: HashMap::new(),
                 texture_failures: HashSet::new(),
+                pending_textures: HashMap::new(),
                 detail_anim_start: 0.0,
                 detail_anim_for: None,
             }))
@@ -193,20 +185,75 @@ impl RecipeApp {
         let id = self.selected_id?;
         self.recipes.iter().find(|recipe| recipe.id == id)
     }
-}
 
-impl eframe::App for RecipeApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Pre-load textures for every recipe with an image, so the
-        // list and detail panes below can use the cache by lookup.
+    // Start decoding every recipe image that is not already cached,
+    // failed, or loading, then collect any decodes that have finished
+    // (without blocking: try_recv only) and turn them into textures.
+    // Texture creation itself must happen on the UI thread, which is
+    // why the worker thread sends pixels and this method loads the
+    // texture. A path that fails decoding is remembered as a failure,
+    // so it is not retried every frame.
+    fn poll_image_loads(&mut self, ctx: &egui::Context) {
         let image_paths: Vec<String> = self
             .recipes
             .iter()
             .filter_map(|recipe| recipe.image_path.clone())
             .collect();
         for path in image_paths {
-            texture_for(ui, &mut self.textures, &mut self.texture_failures, &path);
+            if self.textures.contains_key(&path)
+                || self.texture_failures.contains(&path)
+                || self.pending_textures.contains_key(&path)
+            {
+                continue;
+            }
+            let (sender, receiver) = channel();
+            let thread_path = path.clone();
+            std::thread::spawn(move || {
+                // The receiver may be gone if the app closed; ignore that.
+                let _ = sender.send(decode_image(&thread_path));
+            });
+            self.pending_textures.insert(path, receiver);
         }
+        // Collect finished decodes first, so the map is not mutated
+        // while it is being polled.
+        let mut finished: Vec<(String, Result<egui::ColorImage, String>)> = Vec::new();
+        for (path, receiver) in self.pending_textures.iter() {
+            match receiver.try_recv() {
+                Ok(result) => finished.push((path.clone(), result)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    finished.push((
+                        path.clone(),
+                        Err("Image decoding failed.".to_string()),
+                    ));
+                }
+            }
+        }
+        for (path, result) in finished {
+            self.pending_textures.remove(&path);
+            match result {
+                Ok(color_image) => {
+                    let texture = ctx.load_texture(
+                        &path,
+                        color_image,
+                        egui::TextureOptions::default(),
+                    );
+                    self.textures.insert(path, texture);
+                }
+                Err(_) => {
+                    self.texture_failures.insert(path);
+                }
+            }
+        }
+    }
+}
+
+impl eframe::App for RecipeApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Start/advance image loading (see poll_image_loads), so the
+        // list and detail panes below can use the cache by lookup
+        // and show a spinner for anything still decoding.
+        self.poll_image_loads(ui.ctx());
 
         let editing = matches!(self.mode, Mode::Editing { .. });
         // Edit a copy of the search text inside the panel to keep
@@ -239,12 +286,18 @@ impl eframe::App for RecipeApp {
                         .image_path
                         .as_ref()
                         .and_then(|path| self.textures.get(path).cloned());
+                    let thumbnail_loading = recipe
+                        .image_path
+                        .as_ref()
+                        .map_or(false, |path| self.pending_textures.contains_key(path));
                     ui.horizontal(|ui| {
                         if let Some(texture) = thumbnail {
                             ui.add(
                                 egui::Image::new(&texture)
                                     .fit_to_exact_size(egui::vec2(32.0, 32.0)),
                             );
+                        } else if thumbnail_loading {
+                            ui.add(egui::Spinner::new().size(32.0));
                         }
                         if editing {
                             // Don't let a list click discard an in-progress edit.
@@ -467,6 +520,11 @@ impl eframe::App for RecipeApp {
                                     .max_width(400.0)
                                     .max_height(300.0),
                             );
+                        } else if self.pending_textures.contains_key(path) {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new());
+                                ui.label("Loading image…");
+                            });
                         } else if self.texture_failures.contains(path) {
                             ui.label(format!("[Image could not be loaded: {}]", path));
                         } else {
