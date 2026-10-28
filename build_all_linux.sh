@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "=== rust-egui ==="
-(cd rust-egui && export PATH="$HOME/.cargo/bin:$PATH" && cargo build)
+./rust-egui/build_linux.sh
 
 echo "=== rust-iced ==="
 ./rust-iced/build_linux.sh
