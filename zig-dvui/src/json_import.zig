@@ -1,11 +1,15 @@
 const std = @import("std");
 const db = @import("db.zig");
+const icu = @import("icu");
 
 // Network JSON import from a URL, matching rust-egui's
 // json_import.rs behaviour exactly, plus raw-file import
 // (importFromFile / startFileImport) matching rust-egui's
 // import_from_file: the same parser, shapes, and defaults,
-// read on the same worker-thread + poll path, UTF-8 only.
+// read on the same worker-thread + poll path, with
+// text-encoding import on both paths (BOM sniffing, then
+// ICU detection and strict conversion to UTF-8 — see
+// decodeImportBytes).
 //
 // Accepted document shapes (see test-data/README.md for a
 // fixture for each one):
@@ -75,6 +79,183 @@ const db = @import("db.zig");
 // three accepted top-level shapes need a shape dispatch
 // first, and because a missing title must be a distinct
 // error, not a parse failure with no message.
+
+// --- Text-encoding import (ICU via build-time translate-c) ---
+//
+// Imported JSON may be UTF-8 (with or without BOM),
+// UTF-16LE/BE (with BOM), Windows-1252, or Shift_JIS.
+// It is decoded to UTF-8 before parsing, in both the file
+// and URL paths, exactly as in the other stacks. A decode
+// failure is an import error (error.DecodeFailed), never
+// garbled text.
+//
+// Gotchas, all in this section by design:
+//
+// 1. Zig 0.17 has no @cImport. The ICU headers are
+//    translated at build time (build.zig + src/icu.h)
+//    and imported here as the "icu" module. That also
+//    means this file no longer runs standalone: its
+//    tests run through build.zig (see the README),
+//    because a standalone `zig test` has no "icu"
+//    module to import.
+//
+// 2. ICU's library exports versioned symbols only
+//    (ucnv_open_74, ucsdet_open_74, ... on ICU 74).
+//    Translate-c picks the renaming up from the headers,
+//    so the bindings it generates already carry the
+//    suffix — but the caller code below spells those
+//    suffixed names too. On a system with a different
+//    ICU major version the bindings regenerate with a
+//    new suffix and these call sites must be updated to
+//    match. That is the one version wart in this file,
+//    and it is deliberate: it beats hand-transcribing
+//    the same versioned declarations.
+//
+// 3. UErrorCode is a plain c_int in the bindings
+//    (U_SUCCESS/U_FAILURE are C macros, so they do not
+//    translate). ICU's rule is success on code <= 0:
+//    0 is success, negative values are warnings, positive
+//    values are errors. Every check below is `> 0`,
+//    never `!= U_ZERO_ERROR`, so warnings do not fail
+//    a conversion that produced output.
+//
+// 4. ICU lengths are int32_t while Zig slices are usize.
+//    Lengths are checked, not @intCast blindly: a
+//    document over 2 GB fails as DecodeFailed instead
+//    of panicking in a worker thread.
+//
+// 5. Detector names point into ICU-owned memory that
+//    dies with the detector. The name attempted is
+//    therefore copied into last_decode_name_buf before
+//    any error return, so the UI message can name the
+//    encoding (same pattern as last_http_status: set on
+//    the worker thread, read on the main thread when
+//    formatting the failure).
+//
+// 6. The UChar bound: every input byte yields at most
+//    one UChar for these encodings (UTF-8 sequences
+//    collapse, UTF-16 pairs halve, Shift_JIS and
+//    Windows-1252 are at most 1:1), so bytes.len UChars
+//    always suffices for the first conversion step.
+//    The second step (UChars to UTF-8) sizes exactly
+//    with a pre-flight call: destCapacity 0 with a null
+//    destination only measures, setting
+//    U_BUFFER_OVERFLOW_ERROR, which is expected there
+//    and is not a failure.
+
+/// Encoding attempted by the last failed decode, copied
+/// into last_decode_name_buf (see gotcha 5 above).
+var last_decode_name_buf: [64]u8 = undefined;
+var last_decode_encoding: []const u8 = "";
+
+fn setDecodeName(name: [*c]const u8) void {
+    const slice = cStringToSlice(name);
+    const n = @min(slice.len, last_decode_name_buf.len);
+    @memcpy(last_decode_name_buf[0..n], slice[0..n]);
+    last_decode_encoding = last_decode_name_buf[0..n];
+}
+
+fn cStringToSlice(ptr: [*c]const u8) []const u8 {
+    var len: usize = 0;
+    while (ptr[len] != 0) : (len += 1) {}
+    return ptr[0..len];
+}
+
+fn int32Len(bytes: []const u8) ?i32 {
+    if (bytes.len > std.math.maxInt(i32)) return null;
+    return @intCast(bytes.len);
+}
+
+/// Convert `bytes` with the named ICU converter, strictly:
+/// ICU's own stop callback turns any unmappable sequence
+/// into an error instead of U+FFFD substitution (plain
+/// ucnv_convert would substitute silently, so it is never
+/// used here). `name` must be NUL-terminated (a string
+/// literal, or a detector name pointer). On failure the
+/// attempted name is recorded (see setDecodeName) and
+/// error.DecodeFailed is returned.
+fn decodeWithConverter(alloc: std.mem.Allocator, name: [*c]const u8, bytes: []const u8) ![]u8 {
+    var status: icu.UErrorCode = icu.U_ZERO_ERROR;
+    const converter = icu.ucnv_open_74(name, &status) orelse {
+        setDecodeName(name);
+        return error.DecodeFailed;
+    };
+    defer icu.ucnv_close_74(converter);
+    if (status > 0) {
+        setDecodeName(name);
+        return error.DecodeFailed;
+    }
+    icu.ucnv_setToUCallBack_74(converter, icu.UCNV_TO_U_CALLBACK_STOP_74, null, null, null, &status);
+    if (status > 0) {
+        setDecodeName(name);
+        return error.DecodeFailed;
+    }
+    const len = int32Len(bytes) orelse {
+        setDecodeName(name);
+        return error.DecodeFailed;
+    };
+    const uchars = try alloc.alloc(icu.UChar, bytes.len);
+    defer alloc.free(uchars);
+    var ustatus: icu.UErrorCode = icu.U_ZERO_ERROR;
+    const ulen = icu.ucnv_toUChars_74(converter, uchars.ptr, len, bytes.ptr, len, &ustatus);
+    if (ustatus > 0) {
+        setDecodeName(name);
+        return error.DecodeFailed;
+    }
+    var out_len: i32 = 0;
+    var sstatus: icu.UErrorCode = icu.U_ZERO_ERROR;
+    _ = icu.u_strToUTF8_74(null, 0, &out_len, uchars.ptr, ulen, &sstatus);
+    const out = try alloc.alloc(u8, @intCast(out_len));
+    errdefer alloc.free(out);
+    var written: i32 = 0;
+    sstatus = icu.U_ZERO_ERROR;
+    _ = icu.u_strToUTF8_74(out.ptr, out_len, &written, uchars.ptr, ulen, &sstatus);
+    if (sstatus > 0) {
+        alloc.free(out);
+        setDecodeName(name);
+        return error.DecodeFailed;
+    }
+    return out[0..@intCast(written)];
+}
+
+/// Decode imported bytes to UTF-8, owned by the caller.
+/// BOM sniffing comes first (deterministic, and the UTF-8
+/// BOM must be stripped regardless): EF BB BF strips to
+/// UTF-8, FF FE strips to UTF-16LE, FE FF strips to
+/// UTF-16BE. Otherwise ICU's detector guesses (it is
+/// statistical and wants a few hundred bytes for best
+/// accuracy; ASCII-only JSON typically guesses
+/// ISO-8859-1, which decodes identically to UTF-8, so
+/// that is harmless). A null detector match falls back
+/// to UTF-8, as in the C++ stacks. Empty input decodes
+/// to empty (parsing then fails as InvalidJson, exactly
+/// as an empty UTF-8 document would).
+pub fn decodeImportBytes(alloc: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len == 0) return alloc.dupe(u8, "");
+    if (std.mem.startsWith(u8, bytes, "\xef\xbb\xbf")) {
+        return decodeWithConverter(alloc, "UTF-8", bytes[3..]);
+    }
+    if (std.mem.startsWith(u8, bytes, "\xff\xfe")) {
+        return decodeWithConverter(alloc, "UTF-16LE", bytes[2..]);
+    }
+    if (std.mem.startsWith(u8, bytes, "\xfe\xff")) {
+        return decodeWithConverter(alloc, "UTF-16BE", bytes[2..]);
+    }
+    var status: icu.UErrorCode = icu.U_ZERO_ERROR;
+    const detector = icu.ucsdet_open_74(&status) orelse return error.DecodeFailed;
+    defer icu.ucsdet_close_74(detector);
+    if (status > 0) return error.DecodeFailed;
+    const len = int32Len(bytes) orelse return error.DecodeFailed;
+    icu.ucsdet_setText_74(detector, bytes.ptr, len, &status);
+    if (status > 0) return error.DecodeFailed;
+    const match = icu.ucsdet_detect_74(detector, &status) orelse {
+        return decodeWithConverter(alloc, "UTF-8", bytes);
+    };
+    if (status > 0) return error.DecodeFailed;
+    const name = icu.ucsdet_getName_74(match, &status);
+    if (status > 0) return error.DecodeFailed;
+    return decodeWithConverter(alloc, name, bytes);
+}
 
 // --- Parsing ---
 
@@ -279,7 +460,6 @@ pub const FetchError = error{
     InvalidResponse,
     MalformedChunked,
     TruncatedResponse,
-    NotUtf8,
     HttpStatus,
     TooManyRedirects,
 };
@@ -523,11 +703,17 @@ fn fetchOnce(alloc: std.mem.Allocator, url: HttpUrl, io: std.Io) !FetchOutcome {
     } else {
         body = try alloc.dupe(u8, body_bytes);
     }
-    if (!std.unicode.utf8ValidateSlice(body)) {
+    // Text-encoding import: the body may be UTF-16,
+    // Windows-1252, Shift_JIS, ... — decode it to UTF-8
+    // before parsing, instead of rejecting non-UTF-8.
+    // A decode failure is an import error, not garbled
+    // text (see decodeImportBytes).
+    const text = decodeImportBytes(alloc, body) catch |err| {
         alloc.free(body);
-        return error.NotUtf8;
-    }
-    return .{ .body = body };
+        return err;
+    };
+    alloc.free(body);
+    return .{ .body = text };
 }
 
 fn resolveRedirect(alloc: std.mem.Allocator, current: HttpUrl, location: []const u8) ![]u8 {
@@ -597,31 +783,31 @@ pub fn fetchAndParse(alloc: std.mem.Allocator, url: []const u8, io: std.Io) ![]d
 // import_from_file) ---
 
 /// Import recipes from a raw file on disk: read the whole
-/// file as text and parse it with the same shapes and
-/// defaults as the URL importer (single object, bare
-/// array, or {"recipes": [...]}). Deliberately UTF-8
-/// only: JSON text is UTF-8 by definition, and detecting
-/// other encodings (UTF-16, Shift_JIS, Windows-1252, ...)
-/// is the separate text-encoding-import item, not this
-/// one. A non-UTF-8 file therefore errors here rather
-/// than importing garbled text. The returned recipes are
-/// owned by the caller (see freeRecipes). Read errors
-/// propagate as the underlying file error (FileNotFound,
-/// AccessDenied, ...); formatFileError turns those into
-/// rust-egui's "Could not read file {path}: ..." style.
+/// file, decode it to UTF-8 (see decodeImportBytes: BOM
+/// sniffing, then ICU detection and strict conversion),
+/// and parse it with the same shapes and defaults as the
+/// URL importer (single object, bare array, or
+/// {"recipes": [...]}). A decode failure is an import
+/// error naming the encoding attempted, never garbled
+/// text. The returned recipes are owned by the caller
+/// (see freeRecipes). Read errors propagate as the
+/// underlying file error (FileNotFound, AccessDenied,
+/// ...); formatFileError turns those into rust-egui's
+/// "Could not read file {path}: ..." style.
 pub fn importFromFile(alloc: std.mem.Allocator, path: []const u8, io: std.Io) ![]db.Recipe {
-    const text = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1 << 30));
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1 << 30));
+    defer alloc.free(raw);
+    const text = try decodeImportBytes(alloc, raw);
     defer alloc.free(text);
-    if (!std.unicode.utf8ValidateSlice(text)) return error.FileNotUtf8;
     return parseRecipes(alloc, text);
 }
 
 /// A one-line UI message for a file-import error, in
 /// rust-egui's style ("Could not read file {path}: …",
 /// "Could not parse recipe JSON: …"). Parse errors reuse
-/// formatError; a non-UTF-8 file gets its own message;
-/// anything else from the read step is a read failure
-/// naming the underlying error. OutOfMemory keeps
+/// formatError; a decode failure names the encoding
+/// attempted; anything else from the read step is a read
+/// failure naming the underlying error. OutOfMemory keeps
 /// formatError's generic message rather than posing as a
 /// read failure.
 pub fn formatFileError(alloc: std.mem.Allocator, path: []const u8, err: anyerror) ![]u8 {
@@ -634,7 +820,10 @@ pub fn formatFileError(alloc: std.mem.Allocator, path: []const u8, err: anyerror
         error.InvalidServings,
         error.OutOfMemory,
         => formatError(alloc, err),
-        error.FileNotUtf8 => alloc.dupe(u8, "File was not valid UTF-8."),
+        error.DecodeFailed => if (last_decode_encoding.len > 0)
+            std.fmt.allocPrint(alloc, "Imported text could not be decoded as {s}.", .{last_decode_encoding})
+        else
+            alloc.dupe(u8, "Imported text could not be decoded."),
         else => std.fmt.allocPrint(alloc, "Could not read file {s}: {s}.", .{ path, @errorName(err) }),
     };
 }
@@ -662,7 +851,10 @@ pub fn formatError(alloc: std.mem.Allocator, err: anyerror) ![]u8 {
         error.InvalidResponse => alloc.dupe(u8, "Response was not valid HTTP."),
         error.MalformedChunked => alloc.dupe(u8, "Malformed chunked response."),
         error.TruncatedResponse => alloc.dupe(u8, "Response ended before the full body arrived."),
-        error.NotUtf8 => alloc.dupe(u8, "Response was not valid UTF-8."),
+        error.DecodeFailed => if (last_decode_encoding.len > 0)
+            std.fmt.allocPrint(alloc, "Imported text could not be decoded as {s}.", .{last_decode_encoding})
+        else
+            alloc.dupe(u8, "Imported text could not be decoded."),
         error.HttpStatus => std.fmt.allocPrint(alloc, "Server returned HTTP {d}.", .{last_http_status}),
         error.TooManyRedirects => alloc.dupe(u8, "Too many redirects."),
         else => std.fmt.allocPrint(alloc, "Import failed: {s}.", .{@errorName(err)}),
@@ -1125,7 +1317,7 @@ test "import from file bare array and empty collection" {
     try std.testing.expectEqual(@as(usize, 0), from_empty.len);
 }
 
-test "import from file invalid, non-UTF-8, and missing" {
+test "import from file invalid, undecodable, and missing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const invalid_path = try writeTempFile(&tmp, "invalid.json", "{ this is not json");
@@ -1134,12 +1326,31 @@ test "import from file invalid, non-UTF-8, and missing" {
     const invalid_msg = try formatFileError(test_alloc, invalid_path, error.InvalidJson);
     defer test_alloc.free(invalid_msg);
     try std.testing.expect(std.mem.indexOf(u8, invalid_msg, "Could not parse recipe JSON") != null);
-    const non_utf8_path = try writeTempFile(&tmp, "non-utf8.json", "\xff\xfe{\"title\": \"Toast\"}");
-    defer test_alloc.free(non_utf8_path);
-    try std.testing.expectError(error.FileNotUtf8, importFromFile(test_alloc, non_utf8_path, std.testing.io));
-    const non_utf8_msg = try formatFileError(test_alloc, non_utf8_path, error.FileNotUtf8);
-    defer test_alloc.free(non_utf8_msg);
-    try std.testing.expectEqualStrings("File was not valid UTF-8.", non_utf8_msg);
+    // Truncated UTF-16: the BOM says UTF-16LE, but the
+    // body has an odd byte count, so strict conversion
+    // fails instead of substituting.
+    const truncated_path = try writeTempFile(&tmp, "truncated.json", "\xff\xfeA");
+    defer test_alloc.free(truncated_path);
+    try std.testing.expectError(error.DecodeFailed, importFromFile(test_alloc, truncated_path, std.testing.io));
+    const truncated_msg = try formatFileError(test_alloc, truncated_path, error.DecodeFailed);
+    defer test_alloc.free(truncated_msg);
+    try std.testing.expect(std.mem.indexOf(u8, truncated_msg, "could not be decoded") != null);
+    try std.testing.expect(std.mem.indexOf(u8, truncated_msg, "UTF-16LE") != null);
+    // A lone 0xFF byte is no longer an error: it is a
+    // valid single-byte character, so it now imports
+    // instead of failing. Which single-byte encoding the
+    // detector picks for one isolated byte is genuinely
+    // ambiguous (ICU guesses ISO-8859-2 here), so this
+    // asserts only that it imports and the title still
+    // starts with 'A'; the fixtures pin the
+    // Windows-1252 mapping with real context.
+    const lone_path = try writeTempFile(&tmp, "lone.json", "{\"title\": \"A\xff\"}");
+    defer test_alloc.free(lone_path);
+    const lone = try importFromFile(test_alloc, lone_path, std.testing.io);
+    defer freeRecipes(test_alloc, lone);
+    try std.testing.expectEqual(@as(usize, 1), lone.len);
+    try std.testing.expect(lone[0].title.len > 0);
+    try std.testing.expectEqual(@as(u8, 'A'), lone[0].title[0]);
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.realPath(std.testing.io, &path_buf);
     const missing_path = try std.fmt.allocPrint(test_alloc, "{s}/missing.json", .{path_buf[0..n]});
@@ -1203,4 +1414,131 @@ test "import from file shared fixtures" {
     const invalid_path = try fixturePath(test_alloc, "invalid.json");
     defer test_alloc.free(invalid_path);
     try std.testing.expectError(error.InvalidJson, importFromFile(test_alloc, invalid_path, std.testing.io));
+}
+
+// --- Text-encoding import tests (ICU via translate-c) ---
+
+test "decode BOM handling" {
+    // UTF-8 BOM is stripped, not parsed as content.
+    const utf8_bom = try std.fmt.allocPrint(test_alloc, "\xef\xbb\xbf{s}", .{single_json});
+    defer test_alloc.free(utf8_bom);
+    const from_utf8_bom = try decodeImportBytes(test_alloc, utf8_bom);
+    defer test_alloc.free(from_utf8_bom);
+    try std.testing.expectEqualStrings(single_json, from_utf8_bom);
+
+    // UTF-16LE/BE: BOM + one code unit per ASCII byte.
+    var le: std.ArrayList(u8) = .empty;
+    defer le.deinit(test_alloc);
+    try le.appendSlice(test_alloc, "\xff\xfe");
+    for (single_json) |b| try le.appendSlice(test_alloc, &[_]u8{ b, 0 });
+    const from_le = try decodeImportBytes(test_alloc, le.items);
+    defer test_alloc.free(from_le);
+    try std.testing.expectEqualStrings(single_json, from_le);
+
+    var be: std.ArrayList(u8) = .empty;
+    defer be.deinit(test_alloc);
+    try be.appendSlice(test_alloc, "\xfe\xff");
+    for (single_json) |b| try be.appendSlice(test_alloc, &[_]u8{ 0, b });
+    const from_be = try decodeImportBytes(test_alloc, be.items);
+    defer test_alloc.free(from_be);
+    try std.testing.expectEqualStrings(single_json, from_be);
+
+    // Empty input decodes to empty (parsing then fails
+    // as InvalidJson, exactly as for empty UTF-8).
+    const from_empty = try decodeImportBytes(test_alloc, "");
+    defer test_alloc.free(from_empty);
+    try std.testing.expectEqual(@as(usize, 0), from_empty.len);
+    try std.testing.expectError(error.InvalidJson, parseRecipes(test_alloc, from_empty));
+}
+
+test "decode strict conversion and Shift_JIS round-trip" {
+    // Invalid UTF-8, odd-length UTF-16LE, and a lone
+    // Shift_JIS lead byte all fail strictly instead of
+    // substituting U+FFFD.
+    try std.testing.expectError(error.DecodeFailed, decodeWithConverter(test_alloc, "UTF-8", "A\xff"));
+    try std.testing.expectError(error.DecodeFailed, decodeWithConverter(test_alloc, "UTF-16LE", &[_]u8{ 0x41, 0x00, 0x42 }));
+    try std.testing.expectError(error.DecodeFailed, decodeWithConverter(test_alloc, "Shift_JIS", &[_]u8{0x82}));
+    // "これはテストです。" in Shift_JIS decodes to the
+    // same UTF-8 text (bytes generated from the UTF-8
+    // sentence, so this pins the converter, not the
+    // detector, which gets too little context here).
+    const sjis = [_]u8{ 0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x82, 0xc5, 0x82, 0xb7, 0x81, 0x42 };
+    const decoded = try decodeWithConverter(test_alloc, "Shift_JIS", &sjis);
+    defer test_alloc.free(decoded);
+    try std.testing.expectEqualStrings("これはテストです。", decoded);
+}
+
+test "import from file encoding fixtures" {
+    const names = [_][]const u8{
+        "recipe-utf8.json",
+        "recipe-utf8-bom.json",
+        "recipe-utf16le-bom.json",
+        "recipe-windows-1252.json",
+        "recipe-latin-1.json",
+    };
+    for (names, 0..) |name, i| {
+        const fixture = try std.fmt.allocPrint(test_alloc, "encoding_test_data/{s}", .{name});
+        defer test_alloc.free(fixture);
+        const path = try fixturePath(test_alloc, fixture);
+        defer test_alloc.free(path);
+        const recipes = try importFromFile(test_alloc, path, std.testing.io);
+        defer freeRecipes(test_alloc, recipes);
+        try std.testing.expectEqual(@as(usize, 1), recipes.len);
+        try std.testing.expectEqualStrings("Mushroom Risotto", recipes[0].title);
+        try std.testing.expectEqual(@as(u32, 4), recipes[0].servings);
+        try std.testing.expectEqual(@as(usize, 6), recipes[0].ingredients.len);
+        try std.testing.expectEqual(@as(usize, 5), recipes[0].steps.len);
+        // The em dash survives in every encoding except
+        // the Latin-1 fixture, which uses an ASCII
+        // fallback.
+        if (i < 4) {
+            try std.testing.expect(std.mem.indexOf(u8, recipes[0].description, "—") != null);
+        } else {
+            try std.testing.expect(std.mem.indexOf(u8, recipes[0].description, "—") == null);
+            try std.testing.expect(std.mem.indexOf(u8, recipes[0].description, " - a classic") != null);
+            var has_eur = false;
+            for (recipes[0].ingredients) |ing| {
+                if (std.mem.indexOf(u8, ing.name, "EUR 3") != null) has_eur = true;
+            }
+            try std.testing.expect(has_eur);
+        }
+        if (i == 3) {
+            var has_euro = false;
+            for (recipes[0].ingredients) |ing| {
+                if (std.mem.indexOf(u8, ing.name, "€3") != null) has_euro = true;
+            }
+            try std.testing.expect(has_euro);
+        }
+    }
+}
+
+test "fetch encoding fixtures from a local server" {
+    const io = std.testing.io;
+    const names = [_][]const u8{
+        "recipe-windows-1252.json",
+        "recipe-utf16le-bom.json",
+    };
+    for (names) |name| {
+        const fixture = try std.fmt.allocPrint(test_alloc, "encoding_test_data/{s}", .{name});
+        defer test_alloc.free(fixture);
+        const path = try fixturePath(test_alloc, fixture);
+        defer test_alloc.free(path);
+        const body = try std.Io.Dir.cwd().readFileAlloc(io, path, test_alloc, .limited(1 << 20));
+        defer test_alloc.free(body);
+        const response = try std.fmt.allocPrint(
+            test_alloc,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n\r\n{s}",
+            .{ body.len, body },
+        );
+        defer test_alloc.free(response);
+        const served = try serveOnce(response);
+        const url = try std.fmt.allocPrint(test_alloc, "http://127.0.0.1:{d}/recipes.json", .{served.port});
+        defer test_alloc.free(url);
+        const recipes = try fetchAndParse(test_alloc, url, io);
+        defer freeRecipes(test_alloc, recipes);
+        try std.testing.expectEqual(@as(usize, 1), recipes.len);
+        try std.testing.expectEqualStrings("Mushroom Risotto", recipes[0].title);
+        try std.testing.expect(std.mem.indexOf(u8, recipes[0].description, "—") != null);
+        served.thread.join();
+    }
 }

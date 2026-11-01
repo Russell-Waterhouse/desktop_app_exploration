@@ -53,6 +53,8 @@ ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
 # packages are what DVUI's SDL2 backend builds against (system
 # X11 headers, not Zig-packaged ones). sqlite-devel is what
 # db.zig links against (system SQLite, not a bundled copy).
+# libicu-devel is what json_import.zig links against
+# (system ICU, translated at build time — see src/icu.h).
 $SUDO timeout 600 dnf install -y \
     curl \
     xz \
@@ -65,7 +67,8 @@ $SUDO timeout 600 dnf install -y \
     libXinerama-devel \
     libXrandr-devel \
     mesa-libGL-devel \
-    sqlite-devel
+    sqlite-devel \
+    libicu-devel
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

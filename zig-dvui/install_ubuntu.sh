@@ -62,6 +62,8 @@ done
 # packages are what DVUI's SDL2 backend builds against (system
 # X11 headers, not Zig-packaged ones). libsqlite3-dev is what
 # db.zig links against (system SQLite, not a bundled copy).
+# libicu-dev is what json_import.zig links against (system
+# ICU, translated at build time — see src/icu.h).
 $SUDO timeout 600 apt-get install -y \
     curl \
     xz-utils \
@@ -74,7 +76,8 @@ $SUDO timeout 600 apt-get install -y \
     libxinerama-dev \
     libxrandr-dev \
     libgl1-mesa-dev \
-    libsqlite3-dev
+    libsqlite3-dev \
+    libicu-dev
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

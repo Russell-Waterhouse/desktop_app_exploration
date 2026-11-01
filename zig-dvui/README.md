@@ -52,28 +52,30 @@ equivalent of `install_ubuntu.sh`):
 Unit tests cover recipe data, search, and network JSON
 import (parsing, URL handling, chunked bodies, fetching
 from a local one-shot server, and inserting into a
-throwaway database) and raw-file JSON import (temp files
-and the shared test-data fixtures read from disk) — no
-encoding, UI, or end-to-end tests:
+throwaway database), raw-file JSON import (temp files
+and the shared test-data fixtures read from disk), and
+text-encoding import (BOM sniffing, ICU detection and
+strict conversion, the shared encoding fixtures, and
+encoded bodies over HTTP) — no UI or end-to-end tests:
 
 ```sh
 zig build test
 ```
 
-Search tests also run standalone, with no dependencies:
+Search and database tests also run standalone, with no
+dependencies beyond SQLite for the database tests:
 
 ```sh
 zig test src/search.zig
-```
-
-Database and JSON-import tests run standalone too (the
-JSON-import tests link the system SQLite library, since
-`json_import.zig` imports `db.zig` for its Recipe type):
-
-```sh
 zig test src/db.zig -lsqlite3
-zig test src/json_import.zig -lsqlite3
 ```
+
+The JSON-import tests do not run standalone: since Zig
+0.17 has no @cImport, `json_import.zig` imports the ICU
+bindings as the "icu" module, which only build.zig's
+translate-c step provides (see `src/icu.h`). The
+JSON-export tests, whose round-trips re-import, run
+through build.zig for the same reason.
 
 Database tests open throwaway databases in temp directories
 (via the test-only `openForTest` in `src/db.zig`), never the
