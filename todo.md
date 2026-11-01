@@ -32,16 +32,16 @@ has been tested on Fedora yet.
 - [X] raw-file import: recipes as JSON, collection
 - [X] raw-file export: recipes as JSON, single recipe
 - [X] raw-file export: recipes as JSON, collection
-- [ ] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
+- [X] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
 - [X] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
 - [ ] text input in add/edit forms: IME input, multiline editing, selection, undo/redo, and validation
 - [ ] CPU profiling
 - [ ] memory profiling
 - [ ] compile time profiling
-- [ ] unit tests for recipe data, search, and encoding logic
+- [X] unit tests for recipe data, search, and encoding logic
   - [X] unit tests for recipe data
   - [X] unit tests for search
-  - [ ] unit tests for encoding logic
+  - [X] unit tests for encoding logic
 - [ ] UI tests for recipe list/detail, add, edit, and delete
   - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
