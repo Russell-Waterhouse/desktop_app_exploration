@@ -280,13 +280,13 @@ mod tests {
         let _guard = TempDirGuard::new("round-trip");
 
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
 
         let mut new = test_recipe("Test Soup");
         let id = insert_recipe(&new).unwrap();
         new.id = id;
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 4);
+        assert_eq!(recipes.len(), 8);
         assert!(recipes.iter().any(|r| r.title == "Test Soup"));
 
         new.title = "Test Soup Edited".to_string();
@@ -296,28 +296,39 @@ mod tests {
 
         delete_recipe(id).unwrap();
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         assert!(!recipes.iter().any(|r| r.title == "Test Soup Edited"));
     }
 
     #[test]
-    fn seed_loads_three_recipes_with_children_in_order() {
+    fn seed_loads_seven_recipes_with_children_in_order() {
         let _guard = TempDirGuard::new("seed");
 
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         let titles: Vec<&str> = recipes.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
-            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry"]
+            [
+                "Banana Bread",
+                "Tomato Basil Pasta",
+                "Chicken Stir Fry",
+                "كبسة الدجاج",
+                "पालक पनीर",
+                "番茄炒蛋",
+                "🥞 Blueberry Pancakes 🫐",
+            ]
         );
 
-        // Ingredient and step counts, matching src/seed.rs (19/13 total).
+        // Ingredient and step counts, matching src/seed.rs (27/21 total).
         let counts: Vec<(usize, usize)> = recipes
             .iter()
             .map(|r| (r.ingredients.len(), r.steps.len()))
             .collect();
-        assert_eq!(counts, [(7, 5), (6, 4), (6, 4)]);
+        assert_eq!(
+            counts,
+            [(7, 5), (6, 4), (6, 4), (2, 2), (2, 2), (2, 2), (2, 2)]
+        );
 
         // Order is preserved, not just the set: first and last
         // child of the first and last recipe, in stored order.
@@ -348,13 +359,21 @@ mod tests {
         let _guard = TempDirGuard::new("seed-twice");
 
         let first = load_recipes().unwrap();
-        assert_eq!(first.len(), 3);
+        assert_eq!(first.len(), 7);
         let second = load_recipes().unwrap();
-        assert_eq!(second.len(), 3);
+        assert_eq!(second.len(), 7);
         let titles: Vec<&str> = second.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
-            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry"]
+            [
+                "Banana Bread",
+                "Tomato Basil Pasta",
+                "Chicken Stir Fry",
+                "كبسة الدجاج",
+                "पालक पनीर",
+                "番茄炒蛋",
+                "🥞 Blueberry Pancakes 🫐",
+            ]
         );
     }
 
@@ -402,7 +421,7 @@ mod tests {
         delete_recipe(id).unwrap();
 
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         assert!(!recipes.iter().any(|r| r.id == id));
 
         // No orphan rows left behind in the child tables.
