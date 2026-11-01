@@ -1,12 +1,12 @@
 package main
 
+import "core:c"
 import "core:encoding/json"
 import "core:fmt"
 import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "core:unicode/utf8"
 
 // Network JSON import from a URL, mirroring
 // rust-egui/src/json_import.rs: the same accepted document
@@ -20,9 +20,11 @@ import "core:unicode/utf8"
 // frame and does the database inserts itself), so a slow
 // server or a large document never blocks the UI.
 //
-// Dependencies: only Odin's standard library —
-// core:encoding/json for parsing and core:net TCP for
-// fetching. core:net has no TLS, so https:// is rejected
+// Dependencies: Odin's standard library for parsing and
+// fetching (core:encoding/json, core:net TCP), plus the
+// system ICU library for text-encoding detection and
+// conversion (see the text-encoding section below).
+// core:net has no TLS, so https:// is rejected
 // with a clear message, exactly like the Rust version.
 //
 // Strings: parse_recipes clones every string it keeps into
@@ -225,6 +227,233 @@ parse_recipes :: proc(text: string) -> ([]Recipe, string) {
 	}
 }
 
+// ---- Text-encoding import (ICU via foreign import) ----
+//
+// Import bytes are decoded to UTF-8 before parsing, so file
+// and URL imports accept UTF-8 (with or without BOM),
+// UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS, and
+// store equivalent UTF-8 in SQLite — the same todo item the
+// Rust and C++ stacks already implement, with the same error
+// message ("Imported text could not be decoded as {name}.").
+// Detection runs only when there is no BOM: BOM sniffing
+// precedes heuristic detection, because a detector alone
+// misreads BOM'd UTF-16LE as windows-1252 (seen with
+// chardetng in the Rust round; the rule is the same here).
+//
+// ICU is reached through Odin's foreign system, the same
+// mechanism this package already uses for SQLite (see
+// src/db.odin): a foreign import for the system library and
+// a foreign block for the procedures. No code generation, no
+// headers — the declarations below are the whole binding.
+// Gotchas, all verified against the system ICU (74.2) while
+// writing this:
+// - ICU exports versioned symbols only (ucnv_open_74,
+//   ucsdet_open_74, ...), so every foreign proc carries
+//   @(link_name="..._74"). The suffix is ICU's major
+//   version: it must be updated if the system ICU major
+//   changes (Fedora ships a different major than Ubuntu).
+// - UErrorCode is a plain c.int, and U_SUCCESS/U_FAILURE are
+//   C macros with no symbol to link: success is code <= 0.
+// - Plain ucnv_convert silently substitutes U+FFFD for
+//   undecodable bytes, so it is never used. The STOP
+//   callback below makes undecodable input an error.
+//   UCNV_TO_U_CALLBACK_STOP is a real exported function,
+//   not a macro, so it is declared as a proc and passed
+//   as a proc value.
+// - Detector names are ICU-owned and die with the detector:
+//   decode_import_bytes clones the name before it can be
+//   returned in an error, and frees the clone.
+// - ICU lengths are int32: inputs over 2 GB are refused
+//   with a decode error instead of truncating the cast.
+// - Each decode creates its own detector and converter.
+//   ICU objects are not shared across the import worker
+//   threads, so no locking is needed.
+
+foreign import icuuc "system:icuuc"
+foreign import icui18n "system:icui18n"
+
+UErrorCode :: c.int
+
+// U_SUCCESS as a check, not a symbol: see the gotchas above.
+icu_err_ok :: proc(code: UErrorCode) -> bool { return code <= 0 }
+
+// The STOP callback's real signature takes a
+// UConverterToUnicodeArgs pointer; rawptr stands in for it
+// here because only the function pointer itself is passed,
+// never called from Odin code.
+UConverterToUCallback :: proc "c" (
+	ctx:        rawptr,
+	args:      rawptr,
+	code_units: [^]u8,
+	length:    c.int,
+	reason:    c.int,
+	err:       ^UErrorCode,
+)
+
+foreign icui18n {
+	@(link_name="ucsdet_open_74")
+	ucsdet_open :: proc(err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucsdet_setText_74")
+	ucsdet_set_text :: proc(det: rawptr, text: [^]u8, length: c.int, err: ^UErrorCode) ---
+	@(link_name="ucsdet_detect_74")
+	ucsdet_detect :: proc(det: rawptr, err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucsdet_getName_74")
+	ucsdet_get_name :: proc(match: rawptr, err: ^UErrorCode) -> cstring ---
+	@(link_name="ucsdet_close_74")
+	ucsdet_close :: proc(det: rawptr) ---
+}
+
+foreign icuuc {
+	@(link_name="ucnv_open_74")
+	ucnv_open :: proc(name: cstring, err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucnv_close_74")
+	ucnv_close :: proc(cnv: rawptr) ---
+	@(link_name="ucnv_setToUCallBack_74")
+	ucnv_set_to_u_callback :: proc(
+		cnv:         rawptr,
+		new_action:  UConverterToUCallback,
+		new_context: rawptr,
+		old_action:  ^UConverterToUCallback,
+		old_context: ^rawptr,
+		err:         ^UErrorCode,
+	) ---
+	@(link_name="ucnv_toUChars_74")
+	ucnv_to_u_chars :: proc(
+		cnv:           rawptr,
+		dest:          [^]u16,
+		dest_capacity: c.int,
+		src:           [^]u8,
+		src_length:    c.int,
+		err:           ^UErrorCode,
+	) -> c.int ---
+	@(link_name="u_strToUTF8_74")
+	u_str_to_utf8 :: proc(
+		dest:          [^]u8,
+		dest_capacity: c.int,
+		p_dest_length: ^c.int,
+		src:           [^]u16,
+		src_length:    c.int,
+		err:           ^UErrorCode,
+	) -> c.int ---
+	@(link_name="UCNV_TO_U_CALLBACK_STOP_74")
+	ucnv_to_u_callback_stop :: proc "c" (
+		ctx:        rawptr,
+		args:      rawptr,
+		code_units: [^]u8,
+		length:    c.int,
+		reason:    c.int,
+		err:       ^UErrorCode,
+	) ---
+}
+
+// Detect an encoding name for bytes with no BOM. Returns a
+// heap-cloned name (the detector's own name dies with it)
+// and false when detection itself fails, in which case the
+// caller falls back to UTF-8.
+icu_detect_name :: proc(bytes: []byte) -> (string, bool) {
+	err: UErrorCode = 0
+	det := ucsdet_open(&err)
+	if !icu_err_ok(err) || det == nil {
+		return "", false
+	}
+	defer ucsdet_close(det)
+	ucsdet_set_text(det, raw_data(bytes), c.int(len(bytes)), &err)
+	if !icu_err_ok(err) {
+		return "", false
+	}
+	match := ucsdet_detect(det, &err)
+	if !icu_err_ok(err) || match == nil {
+		return "", false
+	}
+	cname := ucsdet_get_name(match, &err)
+	if !icu_err_ok(err) || cname == nil {
+		return "", false
+	}
+	return strings.clone(string(cname)), true
+}
+
+// Convert bytes from a named encoding to UTF-8, strictly:
+// any undecodable byte is an error, never a U+FFFD
+// substitution (see the STOP-callback gotcha above).
+icu_convert_strict :: proc(bytes: []byte, name: string) -> (string, string) {
+	decode_err := fmt.tprintf("Imported text could not be decoded as %s.", name)
+	err: UErrorCode = 0
+	cname := strings.clone_to_cstring(name)
+	defer delete(cname)
+	cnv := ucnv_open(cname, &err)
+	if !icu_err_ok(err) || cnv == nil {
+		return "", decode_err
+	}
+	defer ucnv_close(cnv)
+	ucnv_set_to_u_callback(cnv, ucnv_to_u_callback_stop, nil, nil, nil, &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	// One UChar per input byte is a safe upper bound for
+	// these encodings (UTF-16 input has half as many units
+	// as bytes; every other unit here comes from one byte).
+	uchars := make([]u16, len(bytes))
+	defer delete(uchars)
+	n := ucnv_to_u_chars(cnv, raw_data(uchars), c.int(len(uchars)), raw_data(bytes), c.int(len(bytes)), &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	if n == 0 {
+		return "", ""
+	}
+	// Two-pass UTF-8 sizing: the measuring call is expected
+	// to fail with U_BUFFER_OVERFLOW_ERROR (15) and report
+	// the length; anything else is a real failure.
+	out_len: c.int = 0
+	err = 0
+	u_str_to_utf8(nil, 0, &out_len, raw_data(uchars), n, &err)
+	if err != 15 {
+		return "", decode_err
+	}
+	out := make([]u8, out_len)
+	defer delete(out)
+	err = 0
+	u_str_to_utf8(raw_data(out), out_len, &out_len, raw_data(uchars), n, &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	return strings.clone(string(out)), ""
+}
+
+// Decode import bytes to UTF-8: BOM sniff first, else ICU
+// detection, then strict conversion. Empty input decodes to
+// empty. The returned text is heap-owned; the caller deletes
+// it after parsing.
+decode_import_bytes :: proc(bytes: []byte) -> (string, string) {
+	if len(bytes) == 0 {
+		return "", ""
+	}
+	if len(bytes) > int(max(i32)) {
+		return "", "Imported text could not be decoded."
+	}
+	name := ""
+	rest := bytes
+	if len(bytes) >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf {
+		name, rest = "UTF-8", bytes[3:]
+	} else if len(bytes) >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe {
+		name, rest = "UTF-16LE", bytes[2:]
+	} else if len(bytes) >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff {
+		name, rest = "UTF-16BE", bytes[2:]
+	}
+	if len(rest) == 0 {
+		return "", ""
+	}
+	if name == "" {
+		detected, ok := icu_detect_name(rest)
+		if !ok {
+			return icu_convert_strict(rest, "UTF-8")
+		}
+		defer delete(detected)
+		return icu_convert_strict(rest, detected)
+	}
+	return icu_convert_strict(rest, name)
+}
+
 // ---- HTTP fetching (http:// only) ----
 
 Http_Url :: struct {
@@ -417,9 +646,6 @@ fetch_once :: proc(url: Http_Url) -> (Fetch_Outcome, string) {
 	} else {
 		body = body_bytes
 	}
-	if !utf8.valid_string(string(body)) {
-		return nil, "Response was not valid UTF-8."
-	}
 	return strings.clone(string(body)), ""
 }
 
@@ -470,28 +696,36 @@ fetch_url :: proc(url: string) -> (string, string) {
 
 // Fetch a document and parse it. This is what the worker
 // thread runs, so a slow server or a large document never
-// blocks the UI.
+// blocks the UI. The body is decoded (see the
+// text-encoding section) before parsing, so a non-UTF-8
+// document is an import error, never garbled text.
 fetch_and_parse :: proc(url: string) -> ([]Recipe, string) {
 	body, err := fetch_url(url)
 	if err != "" {
 		return nil, err
 	}
 	defer delete(body)
-	return parse_recipes(body)
+	text, derr := decode_import_bytes(transmute([]byte)body)
+	if derr != "" {
+		return nil, derr
+	}
+	defer delete(text)
+	return parse_recipes(text)
 }
 
 // ---- Raw-file JSON import ----
 
-// Read a whole file as UTF-8 text and parse it with the
+// Read a whole file and parse it with the
 // same parser the URL importer uses: the same three
 // document shapes, the same defaults, the same "Could not
 // parse recipe JSON" path. Mirrors
 // rust-egui/src/json_import.rs's import_from_file,
 // including its read-failure message shape ("Could not
-// read file {path}: {err}"). Deliberately UTF-8 only: a
-// non-UTF-8 file is an error, because encoding detection
-// (UTF-16, Windows-1252, Shift_JIS) is a separate todo
-// item, not this one. The worker thread runs this, like
+// read file {path}: {err}"). The bytes are decoded (see
+// the text-encoding section) before parsing, so a file in
+// UTF-16, Windows-1252, or Shift_JIS imports as UTF-8,
+// and an undecodable file is a read failure, never
+// garbled text. The worker thread runs this, like
 // fetch_and_parse, so reading and parsing never block the
 // UI.
 import_from_file :: proc(path: string) -> ([]Recipe, string) {
@@ -500,8 +734,10 @@ import_from_file :: proc(path: string) -> ([]Recipe, string) {
 		return nil, fmt.tprintf("Could not read file %s: %v.", path, rerr)
 	}
 	defer delete(data)
-	if !utf8.valid_string(string(data)) {
-		return nil, fmt.tprintf("Could not read file %s: file is not valid UTF-8.", path)
+	text, derr := decode_import_bytes(data)
+	if derr != "" {
+		return nil, fmt.tprintf("Could not read file %s: %s.", path, derr)
 	}
-	return parse_recipes(string(data))
+	defer delete(text)
+	return parse_recipes(text)
 }

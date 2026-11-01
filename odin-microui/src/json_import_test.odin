@@ -447,21 +447,47 @@ test_json_import_file_invalid_and_missing :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_json_import_file_non_utf8_is_a_read_error :: proc(t: ^testing.T) {
-	// UTF-8 only, like the Rust version's read_to_string: a
-	// non-UTF-8 file errors as a read failure, never as
-	// garbled recipes. Encoding detection is the separate
-	// text-encoding item.
-	// Written as raw bytes, not a string: a string literal
-	// cannot hold these byte values portably.
-	path := strings.concatenate({"/tmp/odin-microui-test-import-", "nonutf8", ".json"})
-	write_err := os.write_entire_file(path, []byte{0x7b, 0xff, 0xfe, 0x7d})
+test_json_import_file_undecodable_is_a_read_error :: proc(t: ^testing.T) {
+	// Truncated UTF-16LE: the BOM pins UTF-16LE, the odd
+	// length fails strict conversion, and the file import
+	// wraps it as a read failure naming the encoding.
+	// (Under the old UTF-8-only importer this was the
+	// non-UTF-8 read-error test; undecodable input is now
+	// the decode error below, not a UTF-8 validity error.)
+	path := strings.concatenate({"/tmp/odin-microui-test-import-", "truncutf16", ".json"})
+	write_err := os.write_entire_file(path, []byte{0xff, 0xfe, 'A'})
 	testing.expect(t, write_err == nil, "could not write temp file")
 	defer delete(path)
 	defer os.remove(path)
 	_, err := import_from_file(path)
-	testing.expect(t, err != "", "a non-UTF-8 file must be an error")
+	testing.expect(t, err != "", "a truncated UTF-16LE file must be an error")
 	testing.expect(t, strings.contains(err, "Could not read file"), err)
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-16LE"), err)
+
+	// A lone 0xFF byte is genuinely ambiguous between
+	// single-byte encodings (ICU guesses ISO-8859-2), so it
+	// imports rather than erroring; only the title's first
+	// byte is asserted, like the C++ stacks' version.
+	doc := make([dynamic]byte)
+	append(&doc, `{"title": "A`)
+	append(&doc, 0xff)
+	append(&doc, `"}`)
+	lone_path := strings.concatenate({"/tmp/odin-microui-test-import-", "loneff", ".json"})
+	write_err = os.write_entire_file(lone_path, doc[:])
+	testing.expect(t, write_err == nil, "could not write temp file")
+	defer delete(lone_path)
+	defer os.remove(lone_path)
+	recipes, lerr := import_from_file(lone_path)
+	testing.expect(t, lerr == "", lerr)
+	if lerr != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect(t, len(recipes[0].title) > 0 && recipes[0].title[0] == 'A', "lone-0xFF title should start with A")
+	}
 }
 
 // The shared test-data fixtures, read from disk. odin test
@@ -575,5 +601,182 @@ test_json_import_file_worker_thread :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(job.recipes), 1)
 	if len(job.recipes) == 1 {
 		testing.expect_value(t, job.recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+// ---- Text-encoding import (ICU) ----
+// Mirrors the Rust and C++ stacks' encoding tests: BOM
+// handling, strict conversion plus a Shift_JIS round-trip,
+// all five shared encoding fixtures from disk, and two
+// fixtures served over HTTP.
+
+encoding_test_bytes_ascii_as_utf16 :: proc(text: string, big_endian: bool) -> []byte {
+	out := make([dynamic]byte)
+	if big_endian {
+		append(&out, 0xfe, 0xff)
+		for b in transmute([]byte)text {
+			append(&out, 0, b)
+		}
+	} else {
+		append(&out, 0xff, 0xfe)
+		for b in transmute([]byte)text {
+			append(&out, b, 0)
+		}
+	}
+	return out[:]
+}
+
+@(test)
+test_json_import_decode_bom_handling :: proc(t: ^testing.T) {
+	// UTF-8 BOM is stripped.
+	utf8_bom := make([dynamic]byte)
+	append(&utf8_bom, 0xef, 0xbb, 0xbf)
+	append(&utf8_bom, `{"title": "Toast"}`)
+	text, err := decode_import_bytes(utf8_bom[:])
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// UTF-16LE/BE BOMs are stripped and the body decoded.
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, false))
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, true))
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// Empty input decodes to empty, and a lone BOM too.
+	text, err = decode_import_bytes([]byte{})
+	testing.expect(t, err == "" && text == "", "empty input should decode to empty")
+	text, err = decode_import_bytes([]byte{0xff, 0xfe})
+	testing.expect(t, err == "" && text == "", "a lone BOM should decode to empty")
+}
+
+@(test)
+test_json_import_decode_strict_conversion_and_shift_jis :: proc(t: ^testing.T) {
+	// BOM-pinned UTF-8 with an invalid sequence: strict
+	// conversion must fail, never substitute U+FFFD.
+	bad_utf8 := make([dynamic]byte)
+	append(&bad_utf8, 0xef, 0xbb, 0xbf)
+	append(&bad_utf8, `{"title": "A`)
+	append(&bad_utf8, 0xc3, 0x28)
+	append(&bad_utf8, `"}`)
+	_, err := decode_import_bytes(bad_utf8[:])
+	testing.expect(t, err != "", "invalid UTF-8 must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-8"), err)
+
+	// Truncated UTF-16LE (BOM + one byte): odd length fails.
+	_, err = decode_import_bytes([]byte{0xff, 0xfe, 'A'})
+	testing.expect(t, err != "", "odd-length UTF-16LE must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-16LE"), err)
+
+	// Shift_JIS round-trip through the strict converter with
+	// an explicit name: これはテストです。
+	sjis := []byte{0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x82, 0xc5, 0x82, 0xb7, 0x81, 0x42}
+	sjis_text, sjis_err := icu_convert_strict(sjis, "Shift_JIS")
+	testing.expect(t, sjis_err == "", sjis_err)
+	testing.expect_value(t, sjis_text, "これはテストです。")
+
+	// The same lead byte alone must fail strictly.
+	_, err = icu_convert_strict([]byte{0x82}, "Shift_JIS")
+	testing.expect(t, err != "", "a lone Shift_JIS lead byte must be a decode error")
+}
+
+@(test)
+test_json_import_file_encoding_fixtures :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	if dir == "" {
+		return
+	}
+	enc := strings.concatenate({dir, "encoding_test_data/"})
+	defer delete(enc)
+	names := []string{"recipe-utf8.json", "recipe-utf8-bom.json", "recipe-utf16le-bom.json", "recipe-windows-1252.json", "recipe-latin-1.json"}
+	for name in names {
+		path := strings.concatenate({enc, name})
+		defer delete(path)
+		recipes, err := import_from_file(path)
+		testing.expect(t, err == "", err)
+		if err != "" {
+			continue
+		}
+		defer free_imported_recipes(recipes)
+		testing.expect_value(t, len(recipes), 1)
+		if len(recipes) == 1 {
+			testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+			testing.expect_value(t, recipes[0].servings, 4)
+			testing.expect_value(t, len(recipes[0].ingredients), 6)
+			testing.expect_value(t, len(recipes[0].steps), 5)
+		}
+	}
+	// Windows-1252 keeps its typographic characters; Latin-1
+	// has the ASCII fallbacks in exactly those spots.
+	w1252_path := strings.concatenate({enc, "recipe-windows-1252.json"})
+	defer delete(w1252_path)
+	recipes, err := import_from_file(w1252_path)
+	testing.expect(t, err == "", err)
+	if err == "" {
+		defer free_imported_recipes(recipes)
+		testing.expect(t, strings.contains(recipes[0].description, "—"), "windows-1252 description should keep the em dash")
+		testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "€3"), "windows-1252 ingredient should keep the euro")
+	}
+	latin1_path := strings.concatenate({enc, "recipe-latin-1.json"})
+	defer delete(latin1_path)
+	recipes, err = import_from_file(latin1_path)
+	testing.expect(t, err == "", err)
+	if err == "" {
+		defer free_imported_recipes(recipes)
+		testing.expect(t, strings.contains(recipes[0].description, " - a classic"), "latin-1 description should have the ASCII fallback")
+		testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "EUR 3"), "latin-1 ingredient should have the EUR fallback")
+	}
+}
+
+@(test)
+test_json_import_fetch_encoding_fixtures_from_local_server :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	if dir == "" {
+		return
+	}
+	enc := strings.concatenate({dir, "encoding_test_data/"})
+	defer delete(enc)
+	fetch_names := []string{"recipe-windows-1252.json", "recipe-utf16le-bom.json"}
+	for name in fetch_names {
+		path := strings.concatenate({enc, name})
+		defer delete(path)
+		data, rerr := os.read_entire_file(path, context.allocator)
+		testing.expect(t, rerr == nil, "could not read fixture")
+		if rerr != nil {
+			continue
+		}
+		defer delete(data)
+		header := fmt.aprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", len(data))
+		defer delete(header)
+		response := make([dynamic]byte)
+		defer delete(response)
+		append(&response, ..transmute([]byte)header)
+		append(&response, ..data)
+		listener, port := listen_on_test_port(t)
+		if port == 0 {
+			return
+		}
+		defer net.close(listener)
+		job := new(Serve_Job)
+		job.listener = listener
+		job.response = response[:]
+		server := thread.create_and_start_with_poly_data(job, serve_once_job)
+		recipes, err := fetch_and_parse(fmt.tprintf("http://127.0.0.1:%d/recipes.json", port))
+		thread.join(server)
+		thread.destroy(server)
+		free(job)
+		testing.expect(t, err == "", err)
+		if err != "" {
+			continue
+		}
+		defer free_imported_recipes(recipes)
+		testing.expect_value(t, len(recipes), 1)
+		if len(recipes) == 1 {
+			testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+			testing.expect_value(t, recipes[0].servings, 4)
+		}
 	}
 }

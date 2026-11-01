@@ -1,6 +1,7 @@
 package main
 
 import "core:bytes"
+import "core:c"
 import "core:encoding/json"
 import "core:fmt"
 import "core:mem"
@@ -9,7 +10,6 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:thread"
-import "core:unicode/utf8"
 
 // Network JSON import from a URL, and raw-file JSON import
 // from a path, matching rust-egui's json_import.rs behaviour
@@ -33,11 +33,14 @@ import "core:unicode/utf8"
 // an empty title in the list.
 //
 // FETCHING: plain TCP HTTP with core:net, http:// only, no
-// TLS and no new dependency — the QA route for this test app
+// TLS — the QA route for this test app
 // is the local test-data server, which serves plain http:// on
 // localhost, and this importer says so rather than pretending
 // to support https://. Up to 3 redirects are followed, and
 // chunked bodies are decoded, like the Rust version.
+// Decoding to UTF-8 uses the system ICU library (see the
+// text-encoding section below); that is the one non-core
+// dependency in this file.
 //
 // THREADING: the fetch and parse run on a worker thread (see
 // Import_Job), following this stack's image-loading pattern
@@ -296,6 +299,237 @@ free_imported_recipes :: proc(recipes: []Recipe, allocator := context.allocator)
 	delete(recipes, allocator)
 }
 
+// --- Text-encoding import (ICU via foreign import) ------------------
+//
+// Import bytes are decoded to UTF-8 before parsing, so file
+// and URL imports accept UTF-8 (with or without BOM),
+// UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS, and
+// store equivalent UTF-8 in SQLite — the same todo item the
+// Rust and C++ stacks already implement, with the same error
+// message ("Imported text could not be decoded as {name}.").
+// Detection runs only when there is no BOM: BOM sniffing
+// precedes heuristic detection, because a detector alone
+// misreads BOM'd UTF-16LE as windows-1252 (seen with
+// chardetng in the Rust round; the rule is the same here).
+//
+// ICU is reached through Odin's foreign system, the same
+// mechanism this package already uses for SQLite (see
+// src/db.odin): a foreign import for the system library and
+// a foreign block for the procedures. No code generation, no
+// headers — the declarations below are the whole binding.
+// Gotchas, all verified against the system ICU (74.2) while
+// writing this:
+// - ICU exports versioned symbols only (ucnv_open_74,
+//   ucsdet_open_74, ...), so every foreign proc carries
+//   @(link_name="..._74"). The suffix is ICU's major
+//   version: it must be updated if the system ICU major
+//   changes (Fedora ships a different major than Ubuntu).
+// - UErrorCode is a plain c.int, and U_SUCCESS/U_FAILURE are
+//   C macros with no symbol to link: success is code <= 0.
+// - Plain ucnv_convert silently substitutes U+FFFD for
+//   undecodable bytes, so it is never used. The STOP
+//   callback below makes undecodable input an error.
+//   UCNV_TO_U_CALLBACK_STOP is a real exported function,
+//   not a macro, so it is declared as a proc and passed
+//   as a proc value.
+// - Detector names are ICU-owned and die with the detector:
+//   decode_import_bytes clones the name before it can be
+//   returned in an error, and frees the clone.
+// - ICU lengths are int32: inputs over 2 GB are refused
+//   with a decode error instead of truncating the cast.
+// - Each decode creates its own detector and converter.
+//   ICU objects are not shared across the import worker
+//   threads, so no locking is needed.
+//
+// Allocator discipline follows this file: decoded text and
+// cloned names use the given allocator, and error strings
+// use fmt.aprintf like the other error paths here.
+
+foreign import icuuc "system:icuuc"
+foreign import icui18n "system:icui18n"
+
+UErrorCode :: c.int
+
+// U_SUCCESS as a check, not a symbol: see the gotchas above.
+icu_err_ok :: proc(code: UErrorCode) -> bool { return code <= 0 }
+
+// The STOP callback's real signature takes a
+// UConverterToUnicodeArgs pointer; rawptr stands in for it
+// here because only the function pointer itself is passed,
+// never called from Odin code.
+UConverterToUCallback :: proc "c" (
+	ctx:        rawptr,
+	args:      rawptr,
+	code_units: [^]u8,
+	length:    c.int,
+	reason:    c.int,
+	err:       ^UErrorCode,
+)
+
+foreign icui18n {
+	@(link_name="ucsdet_open_74")
+	ucsdet_open :: proc(err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucsdet_setText_74")
+	ucsdet_set_text :: proc(det: rawptr, text: [^]u8, length: c.int, err: ^UErrorCode) ---
+	@(link_name="ucsdet_detect_74")
+	ucsdet_detect :: proc(det: rawptr, err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucsdet_getName_74")
+	ucsdet_get_name :: proc(match: rawptr, err: ^UErrorCode) -> cstring ---
+	@(link_name="ucsdet_close_74")
+	ucsdet_close :: proc(det: rawptr) ---
+}
+
+foreign icuuc {
+	@(link_name="ucnv_open_74")
+	ucnv_open :: proc(name: cstring, err: ^UErrorCode) -> rawptr ---
+	@(link_name="ucnv_close_74")
+	ucnv_close :: proc(cnv: rawptr) ---
+	@(link_name="ucnv_setToUCallBack_74")
+	ucnv_set_to_u_callback :: proc(
+		cnv:         rawptr,
+		new_action:  UConverterToUCallback,
+		new_context: rawptr,
+		old_action:  ^UConverterToUCallback,
+		old_context: ^rawptr,
+		err:         ^UErrorCode,
+	) ---
+	@(link_name="ucnv_toUChars_74")
+	ucnv_to_u_chars :: proc(
+		cnv:           rawptr,
+		dest:          [^]u16,
+		dest_capacity: c.int,
+		src:           [^]u8,
+		src_length:    c.int,
+		err:           ^UErrorCode,
+	) -> c.int ---
+	@(link_name="u_strToUTF8_74")
+	u_str_to_utf8 :: proc(
+		dest:          [^]u8,
+		dest_capacity: c.int,
+		p_dest_length: ^c.int,
+		src:           [^]u16,
+		src_length:    c.int,
+		err:           ^UErrorCode,
+	) -> c.int ---
+	@(link_name="UCNV_TO_U_CALLBACK_STOP_74")
+	ucnv_to_u_callback_stop :: proc "c" (
+		ctx:        rawptr,
+		args:      rawptr,
+		code_units: [^]u8,
+		length:    c.int,
+		reason:    c.int,
+		err:       ^UErrorCode,
+	) ---
+}
+
+// Detect an encoding name for bytes with no BOM. Returns a
+// name cloned into the allocator (the detector's own name
+// dies with it) and false when detection itself fails, in
+// which case the caller falls back to UTF-8.
+icu_detect_name :: proc(bytes: []byte, allocator := context.allocator) -> (string, bool) {
+	err: UErrorCode = 0
+	det := ucsdet_open(&err)
+	if !icu_err_ok(err) || det == nil {
+		return "", false
+	}
+	defer ucsdet_close(det)
+	ucsdet_set_text(det, raw_data(bytes), c.int(len(bytes)), &err)
+	if !icu_err_ok(err) {
+		return "", false
+	}
+	match := ucsdet_detect(det, &err)
+	if !icu_err_ok(err) || match == nil {
+		return "", false
+	}
+	cname := ucsdet_get_name(match, &err)
+	if !icu_err_ok(err) || cname == nil {
+		return "", false
+	}
+	return strings.clone(string(cname), allocator), true
+}
+
+// Convert bytes from a named encoding to UTF-8, strictly:
+// any undecodable byte is an error, never a U+FFFD
+// substitution (see the STOP-callback gotcha above).
+icu_convert_strict :: proc(bytes: []byte, name: string, allocator := context.allocator) -> (string, string) {
+	decode_err := fmt.aprintf("Imported text could not be decoded as %s.", name)
+	err: UErrorCode = 0
+	cname := strings.clone_to_cstring(name, allocator)
+	defer delete(cname, allocator)
+	cnv := ucnv_open(cname, &err)
+	if !icu_err_ok(err) || cnv == nil {
+		return "", decode_err
+	}
+	defer ucnv_close(cnv)
+	ucnv_set_to_u_callback(cnv, ucnv_to_u_callback_stop, nil, nil, nil, &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	// One UChar per input byte is a safe upper bound for
+	// these encodings (UTF-16 input has half as many units
+	// as bytes; every other unit here comes from one byte).
+	uchars := make([]u16, len(bytes), allocator)
+	defer delete(uchars, allocator)
+	n := ucnv_to_u_chars(cnv, raw_data(uchars), c.int(len(uchars)), raw_data(bytes), c.int(len(bytes)), &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	if n == 0 {
+		return "", ""
+	}
+	// Two-pass UTF-8 sizing: the measuring call is expected
+	// to fail with U_BUFFER_OVERFLOW_ERROR (15) and report
+	// the length; anything else is a real failure.
+	out_len: c.int = 0
+	err = 0
+	u_str_to_utf8(nil, 0, &out_len, raw_data(uchars), n, &err)
+	if err != 15 {
+		return "", decode_err
+	}
+	out := make([]u8, out_len, allocator)
+	defer delete(out, allocator)
+	err = 0
+	u_str_to_utf8(raw_data(out), out_len, &out_len, raw_data(uchars), n, &err)
+	if !icu_err_ok(err) {
+		return "", decode_err
+	}
+	return strings.clone(string(out), allocator), ""
+}
+
+// Decode import bytes to UTF-8: BOM sniff first, else ICU
+// detection, then strict conversion. Empty input decodes to
+// empty. The returned text is owned in the given allocator;
+// the caller deletes it after parsing.
+decode_import_bytes :: proc(bytes: []byte, allocator := context.allocator) -> (string, string) {
+	if len(bytes) == 0 {
+		return "", ""
+	}
+	if len(bytes) > int(max(i32)) {
+		return "", "Imported text could not be decoded."
+	}
+	name := ""
+	rest := bytes
+	if len(bytes) >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf {
+		name, rest = "UTF-8", bytes[3:]
+	} else if len(bytes) >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe {
+		name, rest = "UTF-16LE", bytes[2:]
+	} else if len(bytes) >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff {
+		name, rest = "UTF-16BE", bytes[2:]
+	}
+	if len(rest) == 0 {
+		return "", ""
+	}
+	if name == "" {
+		detected, ok := icu_detect_name(rest, allocator)
+		if !ok {
+			return icu_convert_strict(rest, "UTF-8", allocator)
+		}
+		defer delete(detected, allocator)
+		return icu_convert_strict(rest, detected, allocator)
+	}
+	return icu_convert_strict(rest, name, allocator)
+}
+
 // --- HTTP fetching (http:// only) ------------------------------------
 
 Http_Url :: struct {
@@ -513,10 +747,6 @@ fetch_once :: proc(url: Http_Url, allocator := context.allocator) -> (Fetch_Outc
 		copy(body, body_bytes)
 	}
 	delete(raw)
-	if !utf8.valid_string(string(body)) {
-		delete(body, allocator)
-		return nil, "Response was not valid UTF-8."
-	}
 	return body, ""
 }
 
@@ -585,25 +815,31 @@ fetch_url_n :: proc(url: string, redirects_left: int, allocator := context.alloc
 
 // Fetch a document and parse it. This is what the worker thread
 // runs, so a slow server or a large document never blocks the UI.
+// The body is decoded (see the text-encoding section) before
+// parsing, so a non-UTF-8 document is an import error, never
+// garbled text.
 fetch_and_parse :: proc(url: string, allocator := context.allocator) -> ([]Recipe, string) {
 	body, err := fetch_url(url, allocator)
 	if err != "" {
 		return nil, err
 	}
 	defer delete(body, allocator)
-	return parse_recipes(string(body), allocator)
+	text, derr := decode_import_bytes(body, allocator)
+	if derr != "" {
+		return nil, derr
+	}
+	defer delete(text, allocator)
+	return parse_recipes(text, allocator)
 }
 
 // --- Raw-file import ---------------------------------------------------
 
 // Read a recipe document from a file and parse it with the
 // same parse_recipes the URL importer uses: the same three
-// shapes and the same defaults. Deliberately UTF-8 only, like
-// the Rust version's fs::read_to_string: JSON text is UTF-8
-// by definition, and detecting other encodings (UTF-16,
-// Windows-1252, Shift_JIS) is the separate text-encoding
-// item, not this one. A non-UTF-8 file therefore errors
-// here as a read failure, rather than importing garbled text.
+// shapes and the same defaults. The bytes are decoded (see
+// the text-encoding section) before parsing, so a file in
+// UTF-16, Windows-1252, or Shift_JIS imports as UTF-8, and
+// an undecodable file is a read failure, never garbled text.
 // This is what the worker thread runs, so reading and parsing
 // never block the UI.
 import_from_file :: proc(path: string, allocator := context.allocator) -> ([]Recipe, string) {
@@ -612,10 +848,12 @@ import_from_file :: proc(path: string, allocator := context.allocator) -> ([]Rec
 		return nil, fmt.aprintf("Could not read file %s: %v.", path, err)
 	}
 	defer delete(data, allocator)
-	if !utf8.valid_string(string(data)) {
-		return nil, fmt.aprintf("Could not read file %s: file is not valid UTF-8.", path)
+	text, derr := decode_import_bytes(data, allocator)
+	if derr != "" {
+		return nil, fmt.aprintf("Could not read file %s: %s.", path, derr)
 	}
-	return parse_recipes(string(data), allocator)
+	defer delete(text, allocator)
+	return parse_recipes(text, allocator)
 }
 
 // --- Worker thread + main-thread poll -------------------------------

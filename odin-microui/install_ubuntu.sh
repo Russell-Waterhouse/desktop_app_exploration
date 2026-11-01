@@ -96,13 +96,17 @@ done
 # is what the SQLite step links against: Odin ships no SQLite
 # package, so src/db.odin declares the system SQLite C API and
 # links the system library (see the SQLite section in README.md).
+# libicu-dev is what the text-encoding import links against:
+# src/json_import.odin declares the system ICU C API (ucsdet/ucnv)
+# and links icuuc/icui18n (see the text-encoding section in README.md).
 $SUDO timeout 600 apt-get install -y \
     clang \
     curl \
     unzip \
     libx11-dev \
     libgl1-mesa-dev \
-    libsqlite3-dev
+    libsqlite3-dev \
+    libicu-dev
 
 build_stb_if_needed
 

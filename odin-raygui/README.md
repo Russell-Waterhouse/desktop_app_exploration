@@ -173,6 +173,16 @@ provides. The resulting binary depends on `libsqlite3.so`
 at runtime (check with `ldd`), unlike the Rust version,
 whose SQLite is statically bundled.
 
+Text-encoding import works the same way: `src/json_import.odin`
+declares the system ICU C API by hand (`ucsdet_*` for
+detection, `ucnv_*` for conversion) and links `icuuc` and
+`icui18n` via `foreign import`, so the build needs
+`libicu-dev` on Ubuntu (`libicu-devel` on Fedora). ICU
+exports versioned symbols only (`ucnv_open_74`, ...), so
+each foreign proc carries a `@(link_name="..._74")`
+attribute; the suffix is ICU's major version and must be
+updated if the system ICU major changes.
+
 Schema matches the Rust version (`rust-egui/src/db.rs`):
 recipes (id, title, description, servings, image_path,
 notes), ingredients (id, recipe_id, position, amount, unit,

@@ -114,6 +114,15 @@ Consequences, compared with the Rust version:
 - **The binary depends on the system SQLite at runtime.**
   Check with `ldd odin-microui`: it links `libsqlite3.so`,
   whereas the Rust binary's SQLite is statically bundled.
+- **Text-encoding import links the system ICU the same way.**
+  `src/json_import.odin` declares the ICU C API by hand
+  (`ucsdet_*` for detection, `ucnv_*` for conversion) and
+  links `icuuc`/`icui18n`, so the build needs `libicu-dev`
+  on Ubuntu (`libicu-devel` on Fedora). ICU exports
+  versioned symbols only (`ucnv_open_74`, ...), so each
+  foreign proc carries a `@(link_name="..._74")` attribute;
+  the suffix is ICU's major version and must be updated if
+  the system ICU major changes.
 - **Schema matches Rust** (`rust-egui/src/db.rs`): recipes
   (id, title, description, servings, image_path, notes), ingredients (id, recipe_id,
   position, amount, unit, name), steps (id, recipe_id, position,

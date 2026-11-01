@@ -67,13 +67,17 @@ ODIN_CANDIDATES=(
 # is what the SQLite step links against: Odin ships no SQLite
 # package, so src/db.odin declares the system SQLite C API and
 # links the system library (see the SQLite section in README.md).
+# libicu-devel is what the text-encoding import links against:
+# src/json_import.odin declares the system ICU C API (ucsdet/ucnv)
+# and links icuuc/icui18n (see the text-encoding section in README.md).
 $SUDO timeout 600 dnf install -y \
     clang \
     curl \
     unzip \
     libX11-devel \
     mesa-libGL-devel \
-    sqlite-devel
+    sqlite-devel \
+    libicu-devel
 
 # Skip the download if exactly this version is already installed.
 if command -v odin >/dev/null 2>&1 && odin version 2>/dev/null | grep -q "$ODIN_VERSION"; then

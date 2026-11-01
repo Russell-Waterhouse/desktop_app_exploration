@@ -361,3 +361,124 @@ test_file_import_shared_fixtures_from_disk :: proc(t: ^testing.T) {
 	testing.expect(t, err != "", "invalid.json should be an error")
 	testing.expect(t, strings.contains(err, "Could not parse recipe JSON"), "invalid.json error should use the parse path, got: %s", err)
 }
+
+// ---- Text-encoding import (ICU) ----
+// Mirrors the Rust and C++ stacks' encoding tests: BOM
+// handling, strict conversion plus a Shift_JIS round-trip,
+// all five shared encoding fixtures from disk, and two
+// fixtures served over HTTP.
+
+encoding_test_bytes_ascii_as_utf16 :: proc(text: string, big_endian: bool) -> []byte {
+	out := make([dynamic]byte)
+	if big_endian {
+		append(&out, 0xfe, 0xff)
+		for b in transmute([]byte)text {
+			append(&out, 0, b)
+		}
+	} else {
+		append(&out, 0xff, 0xfe)
+		for b in transmute([]byte)text {
+			append(&out, b, 0)
+		}
+	}
+	return out[:]
+}
+
+@(test)
+test_decode_bom_handling :: proc(t: ^testing.T) {
+	// UTF-8 BOM is stripped.
+	utf8_bom := make([dynamic]byte)
+	append(&utf8_bom, 0xef, 0xbb, 0xbf)
+	append(&utf8_bom, `{"title": "Toast"}`)
+	text, err := decode_import_bytes(utf8_bom[:])
+	testing.expectf(t, err == "", "decode_import_bytes: %s", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// UTF-16LE/BE BOMs are stripped and the body decoded.
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, false))
+	testing.expectf(t, err == "", "decode_import_bytes: %s", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, true))
+	testing.expectf(t, err == "", "decode_import_bytes: %s", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// Empty input decodes to empty, and a lone BOM too.
+	text, err = decode_import_bytes([]byte{})
+	testing.expect(t, err == "" && text == "", "empty input should decode to empty")
+	text, err = decode_import_bytes([]byte{0xff, 0xfe})
+	testing.expect(t, err == "" && text == "", "a lone BOM should decode to empty")
+}
+
+@(test)
+test_decode_strict_conversion_and_shift_jis :: proc(t: ^testing.T) {
+	// BOM-pinned UTF-8 with an invalid sequence: strict
+	// conversion must fail, never substitute U+FFFD.
+	bad_utf8 := make([dynamic]byte)
+	append(&bad_utf8, 0xef, 0xbb, 0xbf)
+	append(&bad_utf8, `{"title": "A`)
+	append(&bad_utf8, 0xc3, 0x28)
+	append(&bad_utf8, `"}`)
+	_, err := decode_import_bytes(bad_utf8[:])
+	testing.expect(t, err != "", "invalid UTF-8 must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), "got: %s", err)
+	testing.expect(t, strings.contains(err, "UTF-8"), "got: %s", err)
+
+	// Truncated UTF-16LE (BOM + one byte): odd length fails.
+	_, err = decode_import_bytes([]byte{0xff, 0xfe, 'A'})
+	testing.expect(t, err != "", "odd-length UTF-16LE must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), "got: %s", err)
+	testing.expect(t, strings.contains(err, "UTF-16LE"), "got: %s", err)
+
+	// Shift_JIS round-trip through the strict converter with
+	// an explicit name: これはテストです。
+	sjis := []byte{0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x82, 0xc5, 0x82, 0xb7, 0x81, 0x42}
+	sjis_text, sjis_err := icu_convert_strict(sjis, "Shift_JIS")
+	testing.expectf(t, sjis_err == "", "icu_convert_strict: %s", sjis_err)
+	testing.expect_value(t, sjis_text, "これはテストです。")
+
+	// The same lead byte alone must fail strictly.
+	_, err = icu_convert_strict([]byte{0x82}, "Shift_JIS")
+	testing.expect(t, err != "", "a lone Shift_JIS lead byte must be a decode error")
+}
+
+@(test)
+test_file_import_encoding_fixtures :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	enc := fmt.tprintf("%s/encoding_test_data", dir)
+	names := []string{"recipe-utf8.json", "recipe-utf8-bom.json", "recipe-utf16le-bom.json", "recipe-windows-1252.json", "recipe-latin-1.json"}
+	for name in names {
+		recipes, err := import_from_file(fmt.tprintf("%s/%s", enc, name))
+		testing.expectf(t, err == "", "%s: %s", name, err)
+		testing.expect_value(t, len(recipes), 1)
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+		testing.expect_value(t, recipes[0].servings, 4)
+		testing.expect_value(t, len(recipes[0].ingredients), 6)
+		testing.expect_value(t, len(recipes[0].steps), 5)
+	}
+	// Windows-1252 keeps its typographic characters; Latin-1
+	// has the ASCII fallbacks in exactly those spots.
+	recipes, _ := import_from_file(fmt.tprintf("%s/recipe-windows-1252.json", enc))
+	testing.expect(t, strings.contains(recipes[0].description, "—"), "windows-1252 description should keep the em dash")
+	testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "€3"), "windows-1252 ingredient should keep the euro")
+	recipes, _ = import_from_file(fmt.tprintf("%s/recipe-latin-1.json", enc))
+	testing.expect(t, strings.contains(recipes[0].description, " - a classic"), "latin-1 description should have the ASCII fallback")
+	testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "EUR 3"), "latin-1 ingredient should have the EUR fallback")
+}
+
+@(test)
+test_fetch_encoding_fixtures_from_local_server :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	enc := fmt.tprintf("%s/encoding_test_data", dir)
+	fetch_names := []string{"recipe-windows-1252.json", "recipe-utf16le-bom.json"}
+	for name in fetch_names {
+		data, rerr := os.read_entire_file(fmt.tprintf("%s/%s", enc, name), context.allocator)
+		testing.expectf(t, rerr == nil, "read %s: %v", name, rerr)
+		response := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(data), string(data))
+		port := serve_once(t, response)
+		recipes, err := fetch_and_parse(fmt.tprintf("http://127.0.0.1:%d/recipes.json", port))
+		testing.expectf(t, err == "", "%s: %s", name, err)
+		testing.expect_value(t, len(recipes), 1)
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+		testing.expect_value(t, recipes[0].servings, 4)
+	}
+}
