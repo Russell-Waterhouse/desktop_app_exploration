@@ -259,21 +259,22 @@ mod tests {
             tmp: tmp.clone(),
         };
 
-        // Seed loads 3 recipes, in order, with ingredients and steps
+        // Seed loads 7 recipes, in order, with ingredients and steps
         // preserved and in order.
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         let titles: Vec<&str> = recipes.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
-            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry"]
+            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry",
+             "كبسة الدجاج", "पालक पनीर", "番茄炒蛋", "🥞 Blueberry Pancakes 🫐"]
         );
         assert_eq!(
             recipes
                 .iter()
                 .map(|r| (r.servings, r.ingredients.len(), r.steps.len()))
                 .collect::<Vec<_>>(),
-            [(8, 7, 5), (4, 6, 4), (4, 6, 4)]
+            [(8, 7, 5), (4, 6, 4), (4, 6, 4), (4, 2, 2), (4, 2, 2), (2, 2, 2), (4, 2, 2)]
         );
         let banana = &recipes[0];
         let banana_ingredients: Vec<&str> = banana
@@ -318,10 +319,11 @@ mod tests {
 
         // Seeding twice does not duplicate recipes.
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         assert_eq!(
             recipes.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
-            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry"]
+            ["Banana Bread", "Tomato Basil Pasta", "Chicken Stir Fry",
+             "كبسة الدجاج", "पालक पनीर", "番茄炒蛋", "🥞 Blueberry Pancakes 🫐"]
         );
 
         // Insert round-trip, with children preserved.
@@ -342,7 +344,7 @@ mod tests {
         let id = insert_recipe(&new).unwrap();
         new.id = id;
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 4);
+        assert_eq!(recipes.len(), 8);
         let inserted = recipes.iter().find(|r| r.id == id).unwrap();
         assert_eq!(inserted.title, "Test Soup");
         assert_eq!(inserted.ingredients.len(), 1);
@@ -369,7 +371,7 @@ mod tests {
         new.steps = vec!["Simmer.".to_string(), "Serve.".to_string()];
         update_recipe(&new).unwrap();
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 4);
+        assert_eq!(recipes.len(), 8);
         let updated = recipes.iter().find(|r| r.id == id).unwrap();
         assert_eq!(updated.title, "Test Soup Edited");
         assert_eq!(updated.description, "Edited");
@@ -386,11 +388,11 @@ mod tests {
 
         // Delete removes the recipe and its children: no orphan
         // ingredient or step rows for the deleted id, and the seed
-        // children's totals are unchanged (7+6+6 ingredients,
-        // 5+4+4 steps).
+        // children's totals are unchanged (7+6+6+2+2+2+2 ingredients,
+        // 5+4+4+2+2+2+2 steps).
         delete_recipe(id).unwrap();
         let recipes = load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         assert!(!recipes.iter().any(|r| r.title == "Test Soup Edited"));
         let conn = Connection::open("recipes.db").unwrap();
         let orphan_ingredients: i64 = conn
@@ -415,7 +417,7 @@ mod tests {
         let total_steps: i64 = conn
             .query_row("SELECT COUNT(*) FROM steps", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(total_ingredients, 19);
-        assert_eq!(total_steps, 13);
+        assert_eq!(total_ingredients, 27);
+        assert_eq!(total_steps, 21);
     }
 }

@@ -890,7 +890,7 @@ mod tests {
             tmp,
         };
         let recipes = db::load_recipes().unwrap();
-        assert_eq!(recipes.len(), 3);
+        assert_eq!(recipes.len(), 7);
         let selected_id = recipes.first().map(|recipe| recipe.id);
         let app = RecipeApp {
             recipes,
@@ -927,7 +927,7 @@ mod tests {
         sender.send(Ok(imported)).unwrap();
         app.import_receiver = Some(receiver);
         app.poll_imports();
-        assert_eq!(app.recipes.len(), 4);
+        assert_eq!(app.recipes.len(), 8);
         let imported_recipe = app
             .recipes
             .iter()
@@ -948,7 +948,7 @@ mod tests {
         sender.send(Err("boom".to_string())).unwrap();
         app.import_receiver = Some(receiver);
         app.poll_imports();
-        assert_eq!(app.recipes.len(), 3);
+        assert_eq!(app.recipes.len(), 7);
         assert_eq!(app.import_error.as_deref(), Some("boom"));
         assert_eq!(app.import_message, None);
         assert!(app.import_receiver.is_none());
