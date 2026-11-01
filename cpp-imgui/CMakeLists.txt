@@ -31,6 +31,7 @@ FetchContent_MakeAvailable(stb)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(ICU REQUIRED COMPONENTS uc i18n)
 
 # SQLite3::SQLite3 was only added in CMake 4.3; older CMake
 # (including the 3.28 in this VM) only provides SQLite::SQLite3.
@@ -62,13 +63,14 @@ target_include_directories(cpp-imgui PRIVATE
     ${stb_SOURCE_DIR}
 )
 
-target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite3::SQLite3 dl)
+target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite3::SQLite3 ICU::uc ICU::i18n dl)
 
-# Unit tests (plain asserts, no test framework, no new dependency).
-# Search tests link nothing but the standard library, so they
-# build without SQLite/SDL/Dear ImGui. DB tests use the stack's
-# own db.cpp and need SQLite3 only. JSON import tests use the
-# stack's own json_import.cpp: the parse/fetch tests need no
+# Unit tests (plain asserts, no test framework, no new dependency
+# except ICU for the JSON import tests, which compile the
+# importer). Search tests link nothing but the standard library,
+# so they build without SQLite/SDL/Dear ImGui. DB tests use the
+# stack's own db.cpp and need SQLite3 only. JSON import tests use
+# the stack's own json_import.cpp: the parse/fetch tests need no
 # SDL/Dear ImGui and link no SQLite symbols (they need the
 # SQLite header only, for the Recipe struct in db.h), and the
 # DB test adds db.cpp and SQLite3.
@@ -88,12 +90,12 @@ add_executable(cpp-imgui-json-import-tests tests/test_json_import.cpp json_impor
 # Needs the SQLite header (for the Recipe struct in db.h) but
 # links no SQLite symbols.
 target_include_directories(cpp-imgui-json-import-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SQLite3_INCLUDE_DIRS})
-target_link_libraries(cpp-imgui-json-import-tests PRIVATE Threads::Threads)
+target_link_libraries(cpp-imgui-json-import-tests PRIVATE Threads::Threads ICU::uc ICU::i18n)
 add_test(NAME cpp-imgui-json-import-tests COMMAND cpp-imgui-json-import-tests)
 
 add_executable(cpp-imgui-json-import-db-tests tests/test_json_import_db.cpp json_import.cpp db.cpp)
 target_include_directories(cpp-imgui-json-import-db-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(cpp-imgui-json-import-db-tests PRIVATE SQLite3::SQLite3 Threads::Threads)
+target_link_libraries(cpp-imgui-json-import-db-tests PRIVATE SQLite3::SQLite3 Threads::Threads ICU::uc ICU::i18n)
 add_test(NAME cpp-imgui-json-import-db-tests COMMAND cpp-imgui-json-import-db-tests)
 
 # JSON export tests: same shape as the import tests — the
@@ -102,5 +104,5 @@ add_test(NAME cpp-imgui-json-import-db-tests COMMAND cpp-imgui-json-import-db-te
 # struct in db.h) but links no SQLite symbols.
 add_executable(cpp-imgui-json-export-tests tests/test_json_export.cpp json_export.cpp json_import.cpp)
 target_include_directories(cpp-imgui-json-export-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SQLite3_INCLUDE_DIRS})
-target_link_libraries(cpp-imgui-json-export-tests PRIVATE Threads::Threads)
+target_link_libraries(cpp-imgui-json-export-tests PRIVATE Threads::Threads ICU::uc ICU::i18n)
 add_test(NAME cpp-imgui-json-export-tests COMMAND cpp-imgui-json-export-tests)

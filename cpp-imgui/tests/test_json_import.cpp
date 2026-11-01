@@ -8,8 +8,9 @@
 // (a thread that binds first, so the port is known, then serves
 // exactly one response) — and raw-file import from temp files
 // and from the shared test-data fixtures on disk, mirroring
-// rust-egui's import_from_file tests, including the UTF-8-only
-// rule (a non-UTF-8 file is an error).
+// rust-egui's import_from_file tests, including the
+// text-encoding import (the five encoding fixtures, BOM
+// handling, and Shift_JIS).
 //
 // Plain asserts only; no test framework. No SQLite, SDL, or Dear
 // ImGui dependency: json_import.cpp uses db.h only for the
@@ -29,6 +30,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <unicode/ucnv.h>
 
 #include "json_import.h"
 
@@ -394,17 +397,109 @@ int main() {
         ++checks;
     }
 
-    // Raw-file import is UTF-8 only: a file with bytes that are
-    // not valid UTF-8 (here a lone 0xFF, as Latin-1 would
-    // produce) fails instead of importing mojibake.
+// A lone 0xFF byte is no longer an error: it is a valid
+    // single-byte character, so it now imports instead of
+    // failing. Which single-byte encoding the detector picks
+    // for one isolated byte is genuinely ambiguous (it
+    // guesses ISO-8859-2 here), so this asserts only that it
+    // imports; the fixtures pin the Windows-1252 mapping
+    // with real context.
     {
-        std::string bad = "{\"title\": \"";
-        bad.push_back(static_cast<char>(0xFF));
-        bad += "\"}";
-        std::string path = write_temp_file("non-utf8", bad);
+        std::string text = "{\"title\": \"A";
+        text.push_back(static_cast<char>(0xFF));
+        text += "\"}";
+        std::string path = write_temp_file("win1252-byte", text);
+        assert(file_ok(path, recipes));
+        ++checks;
+        assert(recipes.size() == 1 && !recipes[0].title.empty() &&
+               recipes[0].title[0] == 'A');
+        ++checks;
+        std::filesystem::remove(path);
+    }
+
+    // A truncated UTF-16 document is still an error: the BOM
+    // says UTF-16LE, but the body has an odd byte count, so
+    // the strict conversion fails instead of substituting.
+    {
+        std::string bad("\xff\xfe", 2);
+        bad += "A";
+        std::string path = write_temp_file("truncated-utf16", bad);
         assert(file_fails(path, "Could not read file"));
         ++checks;
         std::filesystem::remove(path);
+    }
+
+    // decode_import_bytes unit tests.
+    {
+        auto utf16_bytes = [](const std::string& text, bool big_endian) {
+            std::string out;
+            if (big_endian) {
+                out += "\xfe\xff";
+            } else {
+                out += "\xff\xfe";
+            }
+            for (char c : text) {
+                if (big_endian) {
+                    out.push_back('\0');
+                    out.push_back(c);
+                } else {
+                    out.push_back(c);
+                    out.push_back('\0');
+                }
+            }
+            return out;
+        };
+        std::string decoded;
+        std::string decode_error;
+        // The BOM wins: BOM'd UTF-16LE decodes as UTF-16LE.
+        assert(decode_import_bytes(
+            utf16_bytes("{\"title\": \"Toast\"}", false), decoded,
+            decode_error));
+        ++checks;
+        assert(decoded == "{\"title\": \"Toast\"}");
+        ++checks;
+        // UTF-16BE with BOM.
+        assert(decode_import_bytes(
+            utf16_bytes("{\"title\": \"Toast\"}", true), decoded,
+            decode_error));
+        ++checks;
+        assert(decoded == "{\"title\": \"Toast\"}");
+        ++checks;
+        // A UTF-8 BOM is stripped, not decoded into U+FEFF.
+        assert(decode_import_bytes("\xef\xbb\xbf{\"title\": \"Toast\"}",
+                                   decoded, decode_error));
+        ++checks;
+        assert(decoded == "{\"title\": \"Toast\"}");
+        ++checks;
+        // A truncated UTF-16LE document is an error naming the
+        // encoding, not a substitution.
+        std::string truncated("\xff\xfe", 2);
+        truncated += "A";
+        assert(!decode_import_bytes(truncated, decoded, decode_error));
+        ++checks;
+        assert(decode_error.find("UTF-16LE") != std::string::npos);
+        ++checks;
+        // Shift_JIS round-trip: encode a Japanese paragraph
+        // with ICU, then the detector must guess Shift_JIS and
+        // the strict conversion must restore it.
+        std::string japanese =
+            "材料：鶏もも肉二枚、玉ねぎ一個、にんじん一本、醤油大さじ二、"
+            "みりん大さじ一、酒大さじ一。鶏肉は一口大に切り、"
+            "野菜と一緒に炒める。調味料を加えて煮立たせたら、"
+            "ご飯の上に盛り付ける。";
+        UErrorCode status = U_ZERO_ERROR;
+        std::string sjis(japanese.size() * 2 + 16, '\0');
+        int32_t sjis_length =
+            ucnv_convert("Shift_JIS", "UTF-8", &sjis[0],
+                         (int32_t)sjis.size(), japanese.data(),
+                         (int32_t)japanese.size(), &status);
+        assert(U_SUCCESS(status));
+        ++checks;
+        sjis.resize(sjis_length);
+        assert(decode_import_bytes(sjis, decoded, decode_error));
+        ++checks;
+        assert(decoded == japanese);
+        ++checks;
     }
 
     // Raw-file import: the shared test-data fixtures, read from
@@ -434,6 +529,100 @@ int main() {
         ++checks;
         assert(file_fails(fixture_path("invalid.json"), "Could not parse recipe JSON"));
         ++checks;
+    }
+
+    // Text-encoding import: the five encoding fixtures, read
+    // from disk: the same Mushroom Risotto recipe in five byte
+    // encodings.
+    {
+        const char* names[] = {
+            "recipe-utf8.json",
+            "recipe-utf8-bom.json",
+            "recipe-utf16le-bom.json",
+            "recipe-windows-1252.json",
+            "recipe-latin-1.json",
+        };
+        for (int i = 0; i < 5; ++i) {
+            std::string path = fixture_path(
+                std::string("encoding_test_data/") + names[i]);
+            assert(!path.empty());
+            ++checks;
+            // Hoisted out of the assert: the loops below read
+            // recipes[0] unconditionally, so the import must
+            // run even when asserts are compiled out (NDEBUG).
+            bool ok = file_ok(path, recipes);
+            assert(ok);
+            ++checks;
+            assert(recipes.size() == 1 &&
+                   recipes[0].title == "Mushroom Risotto");
+            ++checks;
+            assert(recipes[0].servings == 4);
+            ++checks;
+            assert(recipes[0].ingredients.size() == 6);
+            ++checks;
+            assert(recipes[0].steps.size() == 5);
+            ++checks;
+            // The em dash survives in every encoding except
+            // the Latin-1 fixture, which uses an ASCII fallback.
+            if (i < 4) {
+                assert(recipes[0].description.find("\xe2\x80\x94") !=
+                       std::string::npos);
+                ++checks;
+            } else {
+                assert(recipes[0].description.find("\xe2\x80\x94") ==
+                       std::string::npos);
+                ++checks;
+                assert(recipes[0].description.find(" - a classic") !=
+                       std::string::npos);
+                ++checks;
+                bool has_eur = false;
+                for (const auto& ingredient : recipes[0].ingredients) {
+                    if (ingredient.name.find("EUR 3") !=
+                        std::string::npos) {
+                        has_eur = true;
+                    }
+                }
+                assert(has_eur);
+                ++checks;
+            }
+            if (i == 3) {
+                bool has_euro = false;
+                for (const auto& ingredient : recipes[0].ingredients) {
+                    if (ingredient.name.find("\xe2\x82\xac"
+                                              "3") != std::string::npos) {
+                        has_euro = true;
+                    }
+                }
+                assert(has_euro);
+                ++checks;
+            }
+        }
+    }
+
+    // Text-encoding import over HTTP: a Windows-1252 document
+    // and a BOM'd UTF-16LE document served by the local server
+    // must decode through the URL path, not just the file path.
+    {
+        for (const char* name :
+             {"recipe-windows-1252.json", "recipe-utf16le-bom.json"}) {
+            std::string path = fixture_path(
+                std::string("encoding_test_data/") + name);
+            assert(!path.empty());
+            ++checks;
+            std::ifstream in(path, std::ios::binary);
+            std::string body((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+            OneShotServer server(response_200(body));
+            assert(fetch_and_parse(server.url("/recipes.json"), recipes,
+                                   error));
+            ++checks;
+            assert(recipes.size() == 1 &&
+                   recipes[0].title == "Mushroom Risotto");
+            ++checks;
+            assert(recipes[0].description.find("\xe2\x80\x94") !=
+                   std::string::npos);
+            ++checks;
+        }
     }
 
     std::printf("test_json_import: all %d checks passed\n", checks);

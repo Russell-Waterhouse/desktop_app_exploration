@@ -38,6 +38,7 @@ $SUDO timeout 600 apt-get install -y \
     cmake \
     g++ \
     git \
+    libicu-dev \
     libsdl2-dev \
     libgl1-mesa-dev \
     libsqlite3-dev

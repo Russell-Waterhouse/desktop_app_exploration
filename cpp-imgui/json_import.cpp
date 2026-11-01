@@ -8,6 +8,11 @@
 #include <fstream>
 #include <limits>
 #include <utility>
+#include <vector>
+
+#include <unicode/ucsdet.h>
+#include <unicode/ucnv.h>
+#include <unicode/ustring.h>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -942,64 +947,121 @@ bool fetch_and_parse(const std::string& url, std::vector<Recipe>& recipes,
     if (!fetch_url(url, body, error)) {
         return false;
     }
-    return parse_recipes(body, recipes, error);
+    std::string text;
+    if (!decode_import_bytes(body, text, error)) {
+        return false;
+    }
+    return parse_recipes(text, recipes, error);
 }
 
-// Checks that text is well-formed UTF-8: correct leading and
-// continuation bytes, no overlong encodings, no surrogates, and
-// nothing above U+10FFFF. The JSON parser below passes raw bytes
-// through in strings, so without this check a Latin-1 or
-// Shift_JIS file would silently import as mojibake instead of
-// failing; encoding detection is a separate todo item, so for
-// now a non-UTF-8 file is an error.
-bool is_valid_utf8(const std::string& text) {
-    size_t i = 0;
-    while (i < text.size()) {
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c < 0x80) {
-            ++i;
-            continue;
-        }
-        unsigned int code_point = 0;
-        int extra = 0;
-        if ((c & 0xE0) == 0xC0) {
-            code_point = c & 0x1F;
-            extra = 1;
-            if (code_point < 2) {
-                return false;  // Overlong (C0/C1).
-            }
-        } else if ((c & 0xF0) == 0xE0) {
-            code_point = c & 0x0F;
-            extra = 2;
-        } else if ((c & 0xF8) == 0xF0) {
-            code_point = c & 0x07;
-            extra = 3;
-            if (code_point > 4) {
-                return false;  // Above U+10FFFF.
-            }
-        } else {
-            return false;  // Stray continuation byte or 0xF8+.
-        }
-        if (i + static_cast<size_t>(extra) >= text.size()) {
-            return false;  // Truncated sequence.
-        }
-        for (int j = 1; j <= extra; ++j) {
-            unsigned char next = static_cast<unsigned char>(text[i + static_cast<size_t>(j)]);
-            if ((next & 0xC0) != 0x80) {
-                return false;
-            }
-            code_point = (code_point << 6) | (next & 0x3F);
-        }
-        if ((extra == 2 && code_point < 0x800) ||
-            (extra == 3 && code_point < 0x10000) ||
-            (code_point >= 0xD800 && code_point <= 0xDFFF) ||
-            code_point > 0x10FFFF) {
-            return false;  // Overlong, surrogate, or out of range.
-        }
-        i += static_cast<size_t>(extra) + 1;
+namespace {
+
+// Converts bytes in a detected encoding to UTF-8, strictly:
+// the converter stops on the first invalid byte sequence
+// instead of substituting U+FFFD, so undecodable bytes are an
+// import error rather than garbled text. (ucnv_convert would
+// substitute silently; that is why this opens a converter and
+// sets the STOP callback explicitly.)
+bool convert_strict(const char* from, const std::string& bytes,
+                    std::string& out, std::string& error) {
+    UErrorCode status = U_ZERO_ERROR;
+    UConverter* converter = ucnv_open(from, &status);
+    if (converter == nullptr || U_FAILURE(status)) {
+        error = std::string("Imported text could not be decoded as ") +
+                from + ".";
+        return false;
     }
+    ucnv_setToUCallBack(converter, UCNV_TO_U_CALLBACK_STOP, nullptr,
+                        nullptr, nullptr, &status);
+    std::vector<UChar> units(bytes.size() + 1);
+    int32_t unit_count =
+        ucnv_toUChars(converter, units.data(), (int32_t)units.size(),
+                      bytes.data(), (int32_t)bytes.size(), &status);
+    ucnv_close(converter);
+    if (U_FAILURE(status)) {
+        error = std::string("Imported text could not be decoded as ") +
+                from + ".";
+        return false;
+    }
+    // A UChar holds at most one 3-byte UTF-8 sequence, except a
+    // surrogate pair (two UChars) which encodes to 4 bytes, so
+    // three bytes per UChar plus one always fits.
+    status = U_ZERO_ERROR;
+    std::string utf8(units.size() * 3 + 1, '\0');
+    int32_t utf8_length = 0;
+    u_strToUTF8(&utf8[0], (int32_t)utf8.size(), &utf8_length, units.data(),
+                unit_count, &status);
+    if (U_FAILURE(status)) {
+        error = std::string("Imported text could not be decoded as ") +
+                from + ".";
+        return false;
+    }
+    utf8.resize(utf8_length);
+    out = std::move(utf8);
     return true;
 }
+
+}  // namespace
+
+// Decodes imported JSON bytes to UTF-8 text, detecting the
+// encoding. A byte-order mark wins outright: UTF-8, UTF-16LE,
+// or UTF-16BE. Without one, ICU's charset detector guesses from
+// the content. The BOM check comes first even though the
+// detector recognises BOM-less UTF-16LE: it is deterministic,
+// and the UTF-8 BOM must be stripped regardless, since the
+// parser would choke on a leading U+FEFF. Empty input decodes
+// to empty; the parser then fails downstream, as before.
+bool decode_import_bytes(const std::string& bytes, std::string& text,
+                         std::string& error) {
+    if (bytes.empty()) {
+        text.clear();
+        return true;
+    }
+    auto byte_at = [&bytes](size_t i) {
+        return static_cast<unsigned char>(bytes[i]);
+    };
+    const char* from = nullptr;
+    size_t skip = 0;
+    if (bytes.size() >= 3 && byte_at(0) == 0xEF && byte_at(1) == 0xBB &&
+        byte_at(2) == 0xBF) {
+        from = "UTF-8";
+        skip = 3;
+    } else if (bytes.size() >= 2 && byte_at(0) == 0xFF &&
+               byte_at(1) == 0xFE) {
+        from = "UTF-16LE";
+        skip = 2;
+    } else if (bytes.size() >= 2 && byte_at(0) == 0xFE &&
+               byte_at(1) == 0xFF) {
+        from = "UTF-16BE";
+        skip = 2;
+    }
+    if (from != nullptr) {
+        return convert_strict(from, bytes.substr(skip), text, error);
+    }
+    UErrorCode status = U_ZERO_ERROR;
+    UCharsetDetector* detector = ucsdet_open(&status);
+    if (detector == nullptr || U_FAILURE(status)) {
+        error = "Could not detect the imported text's encoding.";
+        return false;
+    }
+    ucsdet_setText(detector, bytes.data(), (int32_t)bytes.size(), &status);
+    const UCharsetMatch* match = ucsdet_detect(detector, &status);
+    std::string detected;
+    if (match != nullptr && U_SUCCESS(status)) {
+        const char* name = ucsdet_getName(match, &status);
+        if (name != nullptr && U_SUCCESS(status)) {
+            detected = name;
+        }
+    }
+    ucsdet_close(detector);
+    if (detected.empty()) {
+        // No guess (undetectable input): fall back to UTF-8 and
+        // let the strict conversion, then the parser, decide.
+        detected = "UTF-8";
+    }
+    return convert_strict(detected.c_str(), bytes, text, error);
+}
+
 
 bool import_from_file(const std::string& path, std::vector<Recipe>& recipes,
                       std::string& error) {
@@ -1019,9 +1081,10 @@ bool import_from_file(const std::string& path, std::vector<Recipe>& recipes,
         error = "Could not read file " + path + ": read failed.";
         return false;
     }
-    if (!is_valid_utf8(text)) {
-        error = "Could not read file " + path + ": file is not valid UTF-8.";
+    std::string decoded;
+    if (!decode_import_bytes(text, decoded, error)) {
+        error = "Could not read file " + path + ": " + error;
         return false;
     }
-    return parse_recipes(text, recipes, error);
+    return parse_recipes(decoded, recipes, error);
 }

@@ -28,6 +28,7 @@ $SUDO timeout 600 dnf install -y \
     gcc-c++ \
     git \
     SDL2-devel \
+    libicu-devel \
     mesa-libGL-devel \
     sqlite-devel
 

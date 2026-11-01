@@ -21,11 +21,16 @@
 // the list.
 //
 // Fetching is deliberately dependency-light, like rust-egui: a
-// plain POSIX-socket HTTP client, no HTTP library, no TLS, and
-// no new package. Only http:// is supported; an https:// URL
-// fails with a clear message saying so. The QA route for this
-// test app is the local test-data server, which serves plain
-// http:// on localhost.
+// plain POSIX-socket HTTP client, no HTTP library, no TLS.
+// Only http:// is supported; an https:// URL fails with a clear
+// message saying so. The QA route for this test app is the local
+// test-data server, which serves plain http:// on localhost.
+//
+// Imported text is decoded to UTF-8 with ICU (see
+// decode_import_bytes below): the detector handles the
+// encodings the text-encoding-import item covers, and the
+// conversion is strict, so undecodable bytes are an import
+// error, not garbled text.
 //
 // The JSON parser here is a small focused one for exactly these
 // recipe shapes: objects, arrays, strings (with escapes,
@@ -65,15 +70,29 @@ bool fetch_url(const std::string& url, std::string& body, std::string& error);
 bool fetch_and_parse(const std::string& url, std::vector<Recipe>& recipes,
                      std::string& error);
 
-// Reads a whole file as UTF-8 text and parses it with
-// parse_recipes (same shapes, defaults, and error cases).
-// Deliberately UTF-8 only: a file that is not valid UTF-8 is
-// an error, because encoding detection (UTF-16, Windows-1252,
-// Shift_JIS) is a separate todo item, not this one. On a read
+// Reads a whole file, detects its text encoding, decodes it to
+// UTF-8, and parses it with parse_recipes (same shapes,
+// defaults, and error cases). See decode_import_bytes for how
+// the encoding is detected, and test-data/encoding_test_data/
+// for the fixtures each encoding is tested against. On a read
 // failure the error reads "Could not read file <path>: <reason>",
-// matching rust-egui's import_from_file; a parse failure goes
-// through parse_recipes' "Could not parse recipe JSON" path.
-// This is what the worker thread runs for a file import, so
-// reading and parsing never block the UI.
+// matching rust-egui's import_from_file; a decode failure reads
+// "Could not read file <path>: <decode error>"; a parse failure
+// goes through parse_recipes' "Could not parse recipe JSON"
+// path. This is what the worker thread runs for a file import,
+// so reading and parsing never block the UI.
 bool import_from_file(const std::string& path, std::vector<Recipe>& recipes,
                       std::string& error);
+
+// Decodes imported JSON bytes to UTF-8 text, detecting the
+// encoding. A byte-order mark wins outright: UTF-8, UTF-16LE,
+// or UTF-16BE. Without one, ICU's charset detector guesses from
+// the content (verified against the encoding fixtures: it
+// distinguishes Windows-1252 from ISO-8859-1, and recognises
+// UTF-16LE even without a BOM). The conversion is strict: a
+// byte sequence that is not valid in the detected encoding is
+// an import error, not garbled text in the list. Empty input
+// decodes to empty; the parser then fails downstream, as
+// before. On failure returns false and sets error.
+bool decode_import_bytes(const std::string& bytes, std::string& text,
+                         std::string& error);
