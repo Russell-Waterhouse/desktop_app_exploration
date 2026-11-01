@@ -1,7 +1,7 @@
 // Unit tests for recipe data (cpp-imgui), through the stack's
 // existing DB layer (db.h / db.cpp).
 //
-// Covered: seed load (3 recipes, ingredients and steps
+// Covered: seed load (7 recipes, ingredients and steps
 // preserved and in order), insert / update / delete round-trip
 // (update replaces ingredients/steps, delete removes children
 // too), and seeding twice does not duplicate recipes.
@@ -73,17 +73,34 @@ int main() {
     assert(open_database(path, &db, error));
     assert(db != nullptr);
 
-    // Seed loads 3 recipes, ingredients and steps in order.
+    // Seed loads 7 recipes, ingredients and steps in order.
     assert(init_and_seed(db, error));
     std::vector<Recipe> recipes;
     assert(load_recipes(db, recipes, error));
-    assert(recipes.size() == 3);
+    assert(recipes.size() == 7);
     assert(recipes[0].title == "Banana Bread");
     assert(recipes[1].title == "Tomato Basil Pasta");
     assert(recipes[2].title == "Chicken Stir Fry");
+    assert(recipes[3].title == "كبسة الدجاج");
+    assert(recipes[4].title == "पालक पनीर");
+    assert(recipes[5].title == "番茄炒蛋");
+    assert(recipes[6].title == "🥞 Blueberry Pancakes 🫐");
     assert(recipes[0].servings == 8);
     assert(recipes[1].servings == 4);
     assert(recipes[2].servings == 4);
+    assert(recipes[3].servings == 4);
+    assert(recipes[4].servings == 4);
+    assert(recipes[5].servings == 2);
+    assert(recipes[6].servings == 4);
+    // Probe recipes: 2 ingredients, 2 steps each.
+    assert(recipes[3].ingredients.size() == 2);
+    assert(recipes[3].steps.size() == 2);
+    assert(recipes[4].ingredients.size() == 2);
+    assert(recipes[4].steps.size() == 2);
+    assert(recipes[5].ingredients.size() == 2);
+    assert(recipes[5].steps.size() == 2);
+    assert(recipes[6].ingredients.size() == 2);
+    assert(recipes[6].steps.size() == 2);
     // Banana Bread: 7 ingredients, 5 steps, order preserved.
     assert(recipes[0].ingredients.size() == 7);
     assert(recipes[0].ingredients[0].amount == "3");
@@ -112,7 +129,7 @@ int main() {
     // Seeding twice does not duplicate recipes.
     assert(init_and_seed(db, error));
     assert(load_recipes(db, recipes, error));
-    assert(recipes.size() == 3);
+    assert(recipes.size() == 7);
 
     // Insert round-trip.
     Recipe inserted;
@@ -126,7 +143,7 @@ int main() {
     assert(insert_recipe(db, inserted, new_id, error));
     assert(new_id != 0);
     assert(load_recipes(db, recipes, error));
-    assert(recipes.size() == 4);
+    assert(recipes.size() == 8);
     const Recipe* found = find_by_title(recipes, "Test Soup");
     assert(found != nullptr);
     assert(found->id == new_id);
@@ -151,7 +168,7 @@ int main() {
     updated.steps = {"Season and serve."};
     assert(update_recipe(db, updated, error));
     assert(load_recipes(db, recipes, error));
-    assert(recipes.size() == 4);
+    assert(recipes.size() == 8);
     assert(find_by_title(recipes, "Test Soup") == nullptr);
     found = find_by_title(recipes, "Test Soup Updated");
     assert(found != nullptr);
@@ -167,7 +184,7 @@ int main() {
     // Delete round-trip: recipe and its children are gone.
     assert(delete_recipe(db, new_id, error));
     assert(load_recipes(db, recipes, error));
-    assert(recipes.size() == 3);
+    assert(recipes.size() == 7);
     assert(find_by_title(recipes, "Test Soup Updated") == nullptr);
     assert(child_count(db, "ingredients", new_id) == 0);
     assert(child_count(db, "steps", new_id) == 0);

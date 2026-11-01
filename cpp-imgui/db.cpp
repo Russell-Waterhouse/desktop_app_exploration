@@ -114,6 +114,78 @@ std::vector<Recipe> seed_recipes() {
             },
             "Serve over rice.",
         },
+        // Complex-text seed recipes (Nov 2026):
+        // Arabic, Devanagari, Simplified Chinese, and emoji,
+        // mirroring the rust-egui / rust-iced seed data.
+        // Note: with Dear ImGui's default font these render
+        // as ? (verified under Xvfb, Nov 2026); proper
+        // display needs merged fonts for Chinese/emoji plus
+        // text shaping for Arabic/Devanagari, which ImGui
+        // does not do on its own.
+        {
+            0,
+            "كبسة الدجاج",
+            "طبق أرز تقليدي مع الدجاج والبهارات المشكلة.",
+            4,
+            "",
+            {
+                {"1", "", "دجاج"},
+                {"2", "كوب", "أرز بسمتي"},
+            },
+            {
+                "يُتبل الدجاج بالبهارات ويُحمر.",
+                "يُضاف الأرز والمرق ويُطهى حتى ينضج.",
+            },
+            "تُقدم مع السلطة.",
+        },
+        {
+            0,
+            "पालक पनीर",
+            "पालक और पनीर से बना एक लोकप्रिय उत्तर भारतीय व्यंजन।",
+            4,
+            "",
+            {
+                {"500", "ग्राम", "पालक"},
+                {"200", "ग्राम", "पनीर"},
+            },
+            {
+                "पालक को उबालकर पीस लें।",
+                "पनीर डालकर धीमी आंच पर पकाएं।",
+            },
+            "रोटी या चावल के साथ परोसें।",
+        },
+        {
+            0,
+            "番茄炒蛋",
+            "一道简单快捷的家常菜，酸甜可口，老少皆宜。",
+            2,
+            "",
+            {
+                {"2", "个", "番茄"},
+                {"3", "个", "鸡蛋"},
+            },
+            {
+                "鸡蛋打散，入锅炒熟盛出。",
+                "番茄炒软后加入鸡蛋，调味出锅。",
+            },
+            "配米饭食用最佳。",
+        },
+        {
+            0,
+            "🥞 Blueberry Pancakes 🫐",
+            "Fluffy pancakes with 🫐 blueberries, served with 🍁 maple syrup.",
+            4,
+            "",
+            {
+                {"2", "cups", "flour"},
+                {"1", "cup", "🫐 blueberries"},
+            },
+            {
+                "Mix the batter and fold in the 🫐 blueberries.",
+                "Cook on a hot griddle until golden, then serve with 🍁 syrup.",
+            },
+            "Extra 🫐 on top never hurts.",
+        },
     };
 }
 

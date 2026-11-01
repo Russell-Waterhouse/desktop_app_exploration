@@ -128,8 +128,8 @@ int main() {
     std::vector<Recipe> recipes;
     assert(load_recipes(db, recipes, error));
     ++checks;
-    // 3 seeds + 2 imported.
-    assert(recipes.size() == 5);
+    // 7 seeds + 2 imported.
+    assert(recipes.size() == 9);
     ++checks;
     const Recipe* pancakes = find_by_title(recipes, "Pancakes");
     assert(pancakes != nullptr);
@@ -148,7 +148,7 @@ int main() {
     ++checks;
 
     // A failed import inserts nothing: invalid JSON never reaches
-    // insert_recipe, so the count stays at 5.
+    // insert_recipe, so the count stays at 9.
     int bad_port = serve_once(response_200("{ this is not json"));
     std::vector<Recipe> bad;
     assert(!fetch_and_parse("http://127.0.0.1:" + std::to_string(bad_port) + "/bad.json",
@@ -158,7 +158,7 @@ int main() {
     ++checks;
     assert(load_recipes(db, recipes, error));
     ++checks;
-    assert(recipes.size() == 5);
+    assert(recipes.size() == 9);
     ++checks;
 
     sqlite3_close(db);
