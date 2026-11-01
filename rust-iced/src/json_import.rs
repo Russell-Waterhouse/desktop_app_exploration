@@ -1,11 +1,13 @@
 // JSON import from a URL for the recipe manager.
 //
-// This module is deliberately small and dependency-light: serde_json
-// for parsing, and a plain TCP HTTP client for fetching. No HTTP
-// crate, no async runtime, and no TLS: the QA route for this test
-// app is the local test-data server (see test-data/README.md),
-// which serves plain http:// on localhost, and this importer says
-// so rather than pretending to support https://.
+// This module is deliberately small: serde_json for parsing, a
+// plain TCP HTTP client for fetching, chardetng for guessing the
+// text encoding of imported bytes, and encoding_rs for decoding
+// them to UTF-8. No HTTP crate, no async runtime, and no TLS: the
+// QA route for this test app is the local test-data server (see
+// test-data/README.md), which serves plain http:// on localhost,
+// and this importer says so rather than pretending to support
+// https://.
 //
 // The fetch runs on a worker thread (see main.rs, which spawns it
 // the same way it spawns image decoding) and sends its result back
@@ -26,6 +28,7 @@
 // defaults to 0. A recipe with no usable title is an error, not
 // a recipe with an empty title in the list.
 use crate::{Ingredient, Recipe};
+use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -119,6 +122,40 @@ pub(crate) fn parse_recipes(text: &str) -> Result<Vec<Recipe>, String> {
              or an object with a \"recipes\" array."
             .to_string()),
     }
+}
+
+// Decode imported JSON bytes to UTF-8 text, detecting the encoding.
+// A byte-order mark wins outright: UTF-8, UTF-16LE, or UTF-16BE.
+// Without one, chardetng guesses from the content. The BOM check
+// must come first: fed raw bytes, the detector misguesses a BOM'd
+// UTF-16LE document as Windows-1252, because it is not designed
+// for UTF-16 (browsers handle UTF-16 through BOM sniffing only).
+// ISO-2022-JP is not a permissible guess: it is outside the
+// encodings this importer supports. Decoding with the chosen
+// encoding must be error-free; anything else is an import error,
+// not garbled text in the list.
+pub(crate) fn decode_bytes(bytes: &[u8]) -> Result<String, String> {
+    if let Some((encoding, bom_len)) = encoding_rs::Encoding::for_bom(bytes) {
+        let (text, _, had_errors) = encoding.decode(&bytes[bom_len..]);
+        if had_errors {
+            return Err(format!(
+                "Imported text could not be decoded as {}.",
+                encoding.name()
+            ));
+        }
+        return Ok(text.into_owned());
+    }
+    let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
+    detector.feed(bytes, true);
+    let encoding = detector.guess(None, Utf8Detection::Allow);
+    let (text, _, had_errors) = encoding.decode(bytes);
+    if had_errors {
+        return Err(format!(
+            "Imported text could not be decoded as {}.",
+            encoding.name()
+        ));
+    }
+    Ok(text.into_owned())
 }
 
 // --- HTTP fetching (http:// only) ---
@@ -307,9 +344,7 @@ fn fetch_once(url: &HttpUrl) -> Result<FetchOutcome, String> {
     } else {
         body_bytes.to_vec()
     };
-    String::from_utf8(body)
-        .map_err(|_| "Response was not valid UTF-8.".to_string())
-        .map(FetchOutcome::Body)
+    decode_bytes(&body).map(FetchOutcome::Body)
 }
 
 fn resolve_redirect(current: &HttpUrl, location: &str) -> Result<String, String> {
@@ -358,17 +393,16 @@ pub(crate) fn fetch_and_parse(url: &str) -> Result<Vec<Recipe>, String> {
     parse_recipes(&body)
 }
 
-// Import recipes from a raw file on disk: read the whole file as
-// text and parse it with the same shapes and defaults as the URL
-// importer (single object, bare array, or {"recipes": [...]}).
-// This is deliberately UTF-8 only: JSON text is UTF-8 by
-// definition, and detecting other encodings (UTF-16, Shift_JIS,
-// Windows-1252, ...) is the separate text-encoding-import item,
-// not this one. A non-UTF-8 file therefore errors here rather
-// than importing garbled text.
+// Import recipes from a raw file on disk: read the whole file,
+// detect its text encoding, decode it to UTF-8, and parse it with
+// the same shapes and defaults as the URL importer (single object,
+// bare array, or {"recipes": [...]}). See decode_bytes for how the
+// encoding is detected, and test-data/encoding_test_data/ for the
+// fixtures each encoding is tested against.
 pub(crate) fn import_from_file(path: &std::path::Path) -> Result<Vec<Recipe>, String> {
-    let text = std::fs::read_to_string(path)
+    let bytes = std::fs::read(path)
         .map_err(|err| format!("Could not read file {}: {}", path.display(), err))?;
+    let text = decode_bytes(&bytes)?;
     parse_recipes(&text)
 }
 
@@ -605,5 +639,135 @@ mod tests {
             "error was: {}",
             err
         );
+    }
+
+    // Build a BOM'd UTF-16 document from text without a fixture.
+    fn utf16_bytes(text: &str, big_endian: bool) -> Vec<u8> {
+        let mut out = if big_endian {
+            vec![0xFE, 0xFF]
+        } else {
+            vec![0xFF, 0xFE]
+        };
+        for unit in text.encode_utf16() {
+            let bytes = if big_endian {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            };
+            out.extend_from_slice(&bytes);
+        }
+        out
+    }
+
+    #[test]
+    fn decode_bytes_bom_wins_over_detector_guess() {
+        // The detector alone misguesses BOM'd UTF-16LE as
+        // Windows-1252, so the BOM check must come first.
+        let text = "{\"title\": \"Toast\"}";
+        assert_eq!(decode_bytes(&utf16_bytes(text, false)).unwrap(), text);
+    }
+
+    #[test]
+    fn decode_bytes_utf16be_bom() {
+        let text = "{\"title\": \"Toast\"}";
+        assert_eq!(decode_bytes(&utf16_bytes(text, true)).unwrap(), text);
+    }
+
+    #[test]
+    fn decode_bytes_utf8_bom_strips_the_bom() {
+        let mut bytes = b"\xef\xbb\xbf".to_vec();
+        bytes.extend_from_slice(b"{\"title\": \"Toast\"}");
+        let decoded = decode_bytes(&bytes).unwrap();
+        assert_eq!(decoded, "{\"title\": \"Toast\"}");
+        assert!(!decoded.starts_with('\u{feff}'));
+    }
+
+    #[test]
+    fn decode_bytes_shift_jis() {
+        let text = "材料：鶏もも肉二枚、玉ねぎ一個、にんじん一本、醤油大さじ二、みりん大さじ一、酒大さじ一。鶏肉は一口大に切り、野菜と一緒に炒める。調味料を加えて煮立たせたら、ご飯の上に盛り付ける。";
+        let (bytes, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
+        assert!(!had_errors);
+        assert_eq!(decode_bytes(&bytes).unwrap(), text);
+    }
+
+    #[test]
+    fn import_from_file_encoding_fixtures() {
+        // The five encoding fixtures, read from disk: the same
+        // Mushroom Risotto recipe in five byte encodings.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("test-data")
+            .join("encoding_test_data");
+        let mut by_name = Vec::new();
+        for name in [
+            "recipe-utf8.json",
+            "recipe-utf8-bom.json",
+            "recipe-utf16le-bom.json",
+            "recipe-windows-1252.json",
+            "recipe-latin-1.json",
+        ] {
+            let recipes = import_from_file(&root.join(name)).unwrap();
+            assert_eq!(recipes.len(), 1, "fixture {name}");
+            assert_eq!(recipes[0].title, "Mushroom Risotto");
+            assert_eq!(recipes[0].servings, 4, "fixture {name}");
+            assert_eq!(recipes[0].ingredients.len(), 6, "fixture {name}");
+            assert_eq!(recipes[0].steps.len(), 5, "fixture {name}");
+            by_name.push((name, recipes.into_iter().next().unwrap()));
+        }
+        // The em dash survives in every encoding except the
+        // Latin-1 fixture, which uses an ASCII fallback.
+        for (name, recipe) in &by_name[..4] {
+            assert!(
+                recipe.description.contains('—'),
+                "fixture {name}: description was {:?}",
+                recipe.description
+            );
+        }
+        let latin = &by_name[4].1;
+        assert!(!latin.description.contains('—'));
+        assert!(latin.description.contains(" - a classic"));
+        assert!(latin
+            .ingredients
+            .iter()
+            .any(|i| i.name.contains("EUR 3")));
+        let win = &by_name[3].1;
+        assert!(win
+            .ingredients
+            .iter()
+            .any(|i| i.name.contains("€3")));
+    }
+
+    #[test]
+    fn fetch_encoding_fixture_over_http() {
+        // A Windows-1252 document served over HTTP must decode
+        // through the URL path, not just the file path; same for
+        // a BOM'd UTF-16LE document.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("test-data")
+            .join("encoding_test_data");
+        for name in ["recipe-windows-1252.json", "recipe-utf16le-bom.json"] {
+            let body = std::fs::read(root.join(name)).unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes()
+            .into_iter()
+            .chain(body)
+            .collect::<Vec<u8>>();
+            let response: &'static [u8] = Box::leak(response.into_boxed_slice());
+            let (port, handle) = serve_once(response);
+            let recipes =
+                fetch_and_parse(&format!("http://127.0.0.1:{}/{}", port, name)).unwrap();
+            assert_eq!(recipes.len(), 1, "fixture {name}");
+            assert_eq!(recipes[0].title, "Mushroom Risotto");
+            assert!(
+                recipes[0].description.contains('—'),
+                "fixture {name}: description was {:?}",
+                recipes[0].description
+            );
+            handle.join().unwrap();
+        }
     }
 }
