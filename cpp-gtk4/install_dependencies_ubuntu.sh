@@ -39,6 +39,7 @@ $SUDO timeout 600 apt-get install -y \
     g++ \
     git \
     libgtk-4-dev \
+    libicu-dev \
     libsqlite3-dev \
     pkg-config
 

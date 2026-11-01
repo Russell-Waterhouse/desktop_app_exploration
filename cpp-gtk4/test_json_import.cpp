@@ -4,18 +4,22 @@
 // (including a non-200 error, a chunked body, and a redirect),
 // and raw-file import from temp files and the shared test-data
 // fixtures (single recipe, collection, bare array, empty
-// collection, invalid JSON, missing file, non-UTF-8 file).
+// collection, invalid JSON, missing file, and the encoding
+// fixtures: UTF-8 with and without BOM, UTF-16LE with BOM,
+// Windows-1252, and Latin-1).
 //
 // Plain checks only: no test framework, no GTK, no SQLite, so
-// this builds with plain g++ anywhere the app sources are
-// present:
-//   g++ -std=c++17 -Wall -Wextra -pthread test_json_import.cpp json_import.cpp -o /tmp/test_json_import
+// this builds with plain g++ plus ICU anywhere the app sources
+// are present:
+//   g++ -std=c++17 -Wall -Wextra -pthread test_json_import.cpp json_import.cpp $(pkg-config --cflags --libs icu-uc icu-i18n) -o /tmp/test_json_import
 //   /tmp/test_json_import
 // Exit code is 0 only when every check passes; each failure is
 // printed and the run continues so all failures are visible.
 
 #include "json_export.h"
 #include "json_import.h"
+
+#include <unicode/ucnv.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -423,19 +427,107 @@ int main(int argc, char** argv) {
               "missing file error mentions reading");
     }
     {
-        // Non-UTF-8 bytes are a parse error, not a silent
-        // reinterpretation: encoding detection is a separate
-        // todo item, so the file route stays UTF-8 only.
+        // A lone 0xFF byte is no longer an error: it is a
+        // valid single-byte character, so it now imports
+        // instead of failing. Which single-byte encoding the
+        // detector picks for one isolated byte is genuinely
+        // ambiguous (it guesses ISO-8859-2 here), so this
+        // asserts only that it imports; the fixtures pin the
+        // Windows-1252 mapping with real context.
         std::string path = write_temp_file(
-            "nonutf8", std::string("{\"title\": \"A\xFF\"}"));
-        std::vector<ImportedRecipe> bad;
+            "win1252byte", std::string("{\"title\": \"A\xFF\"}"));
+        std::vector<ImportedRecipe> one;
         std::string error;
-        check(!import_from_file(path, bad, error),
-              "non-UTF-8 file is an error");
-        check(error.find("Could not parse recipe JSON") !=
-                  std::string::npos,
-              "non-UTF-8 file error mentions parsing");
+        check(import_from_file(path, one, error),
+              "lone 0xFF file imports");
+        check(one.size() == 1 && !one[0].title.empty() &&
+                  one[0].title[0] == 'A',
+              "lone 0xFF file content");
         std::remove(path.c_str());
+        // A truncated UTF-16 document is still an error: the
+        // BOM says UTF-16LE, but the body has an odd byte
+        // count, so the strict conversion fails instead of
+        // substituting.
+        std::string truncated("\xff\xfe", 2);
+        truncated += "A";
+        path = write_temp_file("truncated-utf16", truncated);
+        std::vector<ImportedRecipe> bad;
+        check(!import_from_file(path, bad, error),
+              "truncated UTF-16 file is an error");
+        check(error.find("Could not read file") != std::string::npos,
+              "truncated UTF-16 error mentions reading");
+        std::remove(path.c_str());
+    }
+    {
+        // decode_import_bytes unit tests.
+        auto utf16_bytes = [](const std::string& text,
+                              bool big_endian) {
+            std::string out;
+            if (big_endian) {
+                out += "\xfe\xff";
+            } else {
+                out += "\xff\xfe";
+            }
+            for (char c : text) {
+                if (big_endian) {
+                    out.push_back('\0');
+                    out.push_back(c);
+                } else {
+                    out.push_back(c);
+                    out.push_back('\0');
+                }
+            }
+            return out;
+        };
+        std::string decoded;
+        std::string decode_error;
+        // The BOM wins: BOM'd UTF-16LE decodes as UTF-16LE.
+        check(decode_import_bytes(
+                  utf16_bytes("{\"title\": \"Toast\"}", false), decoded,
+                  decode_error),
+              "BOM'd UTF-16LE decodes");
+        check(decoded == "{\"title\": \"Toast\"}",
+              "BOM'd UTF-16LE content");
+        // UTF-16BE with BOM.
+        check(decode_import_bytes(
+                  utf16_bytes("{\"title\": \"Toast\"}", true), decoded,
+                  decode_error),
+              "BOM'd UTF-16BE decodes");
+        check(decoded == "{\"title\": \"Toast\"}",
+              "BOM'd UTF-16BE content");
+        // A UTF-8 BOM is stripped, not decoded into U+FEFF.
+        check(decode_import_bytes("\xef\xbb\xbf{\"title\": \"Toast\"}",
+                                  decoded, decode_error),
+              "UTF-8 BOM decodes");
+        check(decoded == "{\"title\": \"Toast\"}",
+              "UTF-8 BOM content");
+        // A truncated UTF-16LE document is an error naming the
+        // encoding, not a substitution.
+        std::string truncated("\xff\xfe", 2);
+        truncated += "A";
+        check(!decode_import_bytes(truncated, decoded, decode_error),
+              "truncated UTF-16LE is an error");
+        check(decode_error.find("UTF-16LE") != std::string::npos,
+              "truncated UTF-16LE error names the encoding");
+        // Shift_JIS round-trip: encode a Japanese paragraph
+        // with ICU, then the detector must guess Shift_JIS and
+        // the strict conversion must restore it.
+        std::string japanese =
+            "材料：鶏もも肉二枚、玉ねぎ一個、にんじん一本、醤油大さじ二、"
+            "みりん大さじ一、酒大さじ一。鶏肉は一口大に切り、"
+            "野菜と一緒に炒める。調味料を加えて煮立たせたら、"
+            "ご飯の上に盛り付ける。";
+        UErrorCode status = U_ZERO_ERROR;
+        std::string sjis(japanese.size() * 2 + 16, '\0');
+        int32_t sjis_length =
+            ucnv_convert("Shift_JIS", "UTF-8", &sjis[0],
+                         (int32_t)sjis.size(), japanese.data(),
+                         (int32_t)japanese.size(), &status);
+        check(U_SUCCESS(status), "Shift_JIS test input encodes");
+        sjis.resize(sjis_length);
+        check(decode_import_bytes(sjis, decoded, decode_error),
+              "Shift_JIS decodes");
+        check(decoded == japanese, "Shift_JIS content");
     }
     {
         // The repo's shared test-data fixtures, read from disk
@@ -473,6 +565,115 @@ int main(int argc, char** argv) {
             check(error.find("Could not parse recipe JSON") !=
                       std::string::npos,
                   "fixture invalid.json error mentions parsing");
+        }
+    }
+    {
+        // Text-encoding import: the five encoding fixtures,
+        // read from disk: the same Mushroom Risotto recipe in
+        // five byte encodings.
+        std::string dir = find_test_data_dir(argc, argv);
+        check(!dir.empty(), "encoding fixtures directory found");
+        if (!dir.empty()) {
+            const char* names[] = {
+                "recipe-utf8.json",
+                "recipe-utf8-bom.json",
+                "recipe-utf16le-bom.json",
+                "recipe-windows-1252.json",
+                "recipe-latin-1.json",
+            };
+            for (int i = 0; i < 5; ++i) {
+                std::string path =
+                    dir + "/encoding_test_data/" + names[i];
+                check(file_ok(path, recipes),
+                      std::string("encoding fixture ") + names[i] +
+                          " imports");
+                check(recipes.size() == 1 &&
+                          recipes[0].title == "Mushroom Risotto",
+                      std::string("encoding fixture ") + names[i] +
+                          " content");
+                check(recipes[0].servings == 4,
+                      std::string("encoding fixture ") + names[i] +
+                          " servings");
+                check(recipes[0].ingredients.size() == 6,
+                      std::string("encoding fixture ") + names[i] +
+                          " ingredients");
+                check(recipes[0].steps.size() == 5,
+                      std::string("encoding fixture ") + names[i] +
+                          " steps");
+                // The em dash survives in every encoding
+                // except the Latin-1 fixture, which uses an
+                // ASCII fallback.
+                if (i < 4) {
+                    check(recipes[0].description.find("\xe2\x80\x94") !=
+                              std::string::npos,
+                          std::string("encoding fixture ") + names[i] +
+                              " em dash");
+                } else {
+                    check(recipes[0].description.find("\xe2\x80\x94") ==
+                              std::string::npos,
+                          "encoding fixture latin-1 has no em dash");
+                    check(recipes[0].description.find(" - a classic") !=
+                              std::string::npos,
+                          "encoding fixture latin-1 fallback dash");
+                    bool has_eur = false;
+                    for (const auto& ingredient :
+                         recipes[0].ingredients) {
+                        if (ingredient.name.find("EUR 3") !=
+                            std::string::npos) {
+                            has_eur = true;
+                        }
+                    }
+                    check(has_eur,
+                          "encoding fixture latin-1 EUR fallback");
+                }
+                if (i == 3) {
+                    bool has_euro = false;
+                    for (const auto& ingredient :
+                         recipes[0].ingredients) {
+                        if (ingredient.name.find("\xe2\x82\xac"
+                                                  "3") !=
+                            std::string::npos) {
+                            has_euro = true;
+                        }
+                    }
+                    check(has_euro,
+                          "encoding fixture windows-1252 euro");
+                }
+            }
+        }
+    }
+    {
+        // Text-encoding import over HTTP: a Windows-1252
+        // document and a BOM'd UTF-16LE document served by the
+        // local server must decode through the URL path, not
+        // just the file path.
+        std::string dir = find_test_data_dir(argc, argv);
+        if (!dir.empty()) {
+            for (const char* name :
+                 {"recipe-windows-1252.json",
+                  "recipe-utf16le-bom.json"}) {
+                std::string path =
+                    dir + "/encoding_test_data/" + name;
+                std::ifstream in(path, std::ios::binary);
+                std::string body(
+                    (std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+                OneShotServer server(http_response(body));
+                std::vector<ImportedRecipe> fetched;
+                std::string error;
+                check(fetch_and_parse(server.url("/recipes.json"),
+                                      fetched, error),
+                      std::string("encoding fixture ") + name +
+                          " fetches");
+                check(fetched.size() == 1 &&
+                          fetched[0].title == "Mushroom Risotto",
+                      std::string("encoding fixture ") + name +
+                          " fetched content");
+                check(fetched[0].description.find("\xe2\x80\x94") !=
+                          std::string::npos,
+                      std::string("encoding fixture ") + name +
+                          " fetched em dash");
+            }
         }
     }
 

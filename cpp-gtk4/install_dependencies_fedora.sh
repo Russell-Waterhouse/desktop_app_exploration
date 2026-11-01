@@ -28,6 +28,7 @@ $SUDO timeout 600 dnf install -y \
     gcc-c++ \
     git \
     gtk4-devel \
+    libicu-devel \
     sqlite-devel \
     pkgconf-pkg-config
 
