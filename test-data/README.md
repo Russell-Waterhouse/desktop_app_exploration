@@ -28,6 +28,10 @@ app in this repo, so all stacks download the same data.
   succeed with zero recipes, not error.
 - `invalid.json` — not JSON at all. Importing it must fail with an
   error, not crash or import a partial recipe.
+- `encoding_test_data/` — the same recipe in five encodings (UTF-8
+  with and without BOM, UTF-16LE with BOM, Windows-1252, and
+  ISO-8859-1), for testing encoding detection and import. See
+  `encoding_test_data/README.md`.
 
 An importer accepts all three document shapes — a single recipe
 object, a bare array of recipes, and an object with a `recipes`
