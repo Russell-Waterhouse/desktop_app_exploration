@@ -129,9 +129,8 @@ open_database :: proc(path: string) -> (^Sqlite_Db, string) {
 	return db, ""
 }
 
-// Insert arrived with the add-recipe step, update with
-// the edit-recipe step; delete arrives with the delete
-// step.
+// Insert, update, and delete arrived with the
+// add/edit/delete steps.
 
 close_database :: proc(db: ^Sqlite_Db) {
 	if db != nil {
@@ -504,6 +503,28 @@ update_recipe :: proc(db: ^Sqlite_Db, recipe: Recipe) -> string {
 		return err
 	}
 	if err := insert_children(db, recipe.id, recipe); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	return exec_sql(db, "COMMIT")
+}
+
+// Delete a recipe and its ingredients and steps, in one
+// transaction. The schema has no ON DELETE CASCADE, so the
+// children are deleted explicitly, before the recipe row.
+delete_recipe :: proc(db: ^Sqlite_Db, id: i64) -> string {
+	if err := exec_sql(db, "BEGIN"); err != "" {
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM ingredients WHERE recipe_id = %d", id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM steps WHERE recipe_id = %d", id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM recipes WHERE id = %d", id)); err != "" {
 		exec_sql(db, "ROLLBACK")
 		return err
 	}

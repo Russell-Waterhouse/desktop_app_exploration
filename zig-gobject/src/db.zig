@@ -38,9 +38,8 @@ const std = @import("std");
 // load_error instead of crashing; main shows that error in
 // the detail pane.
 //
-// Insert arrived with the add-recipe step, update with
-// the edit-recipe step; delete arrives with the delete
-// step.
+// Insert, update, and delete arrived with the
+// add/edit/delete steps.
 
 const sqlite3 = opaque {};
 const sqlite3_stmt = opaque {};
@@ -433,6 +432,27 @@ pub fn updateRecipe(recipe: Recipe) !void {
         }
     }
     try insertChildren(db, recipe.id, recipe);
+    try exec(db, "COMMIT");
+}
+
+
+/// Delete a recipe and its children, in one transaction.
+pub fn deleteRecipe(id: i64) !void {
+    const db = db_handle orelse return error.NoDatabase;
+    try exec(db, "BEGIN");
+    errdefer exec(db, "ROLLBACK") catch {};
+    for ([_][:0]const u8{
+        "DELETE FROM ingredients WHERE recipe_id = ?1",
+        "DELETE FROM steps WHERE recipe_id = ?1",
+        "DELETE FROM recipes WHERE id = ?1",
+    }) |sql| {
+        const stmt = try prepare(db, sql);
+        defer _ = sqlite3_finalize(stmt);
+        try bindInt(stmt, 1, id);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            return setError(db, "deleting recipe", .{});
+        }
+    }
     try exec(db, "COMMIT");
 }
 

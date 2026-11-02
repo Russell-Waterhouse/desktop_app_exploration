@@ -142,6 +142,23 @@ fn show_recipe(detail: *Detail, recipe: db.Recipe) void {
     gtk.Label.setText(detail.notes, recipe.notes);
 }
 
+// clear_detail empties the detail pane (used when the
+// last recipe has been deleted).
+fn clear_detail(detail: *Detail) void {
+    gtk.Label.setText(detail.title, "");
+    gtk.Label.setText(detail.description, "");
+    gtk.Label.setText(detail.servings, "");
+    for (detail.ingredient_labels) |label| {
+        gtk.Label.setText(label, "");
+        gtk.Widget.setVisible(label.as(gtk.Widget), 0);
+    }
+    for (detail.step_labels) |label| {
+        gtk.Label.setText(label, "");
+        gtk.Widget.setVisible(label.as(gtk.Widget), 0);
+    }
+    gtk.Label.setText(detail.notes, "");
+}
+
 fn on_row_selected(_: *gtk.ListBox, row: ?*gtk.ListBoxRow, detail: *Detail) callconv(.c) void {
     const r = row orelse return;
     const index = gtk.ListBoxRow.getIndex(r);
@@ -165,6 +182,13 @@ var active_form: ?*Form = null;
 // Id of the recipe currently shown in the detail pane (-1
 // when none is selected); the Edit button acts on it.
 var selected_id: i64 = -1;
+
+// Id awaiting confirmation in the delete dialog (-1 when
+// no dialog is open); the dialog is modal, so this is
+// never shared between two dialogs.
+var pending_delete_id: i64 = -1;
+
+var detail_ptr: *Detail = undefined;
 
 const IngredientRow = struct {
     box: *gtk.Widget,
@@ -477,6 +501,81 @@ fn on_edit_clicked(_: *gtk.Button, parent: *gtk.Window) callconv(.c) void {
     }
 }
 
+fn on_delete_clicked(_: *gtk.Button, parent: *gtk.Window) callconv(.c) void {
+    if (selected_id < 0) return;
+    var title: [:0]const u8 = "";
+    for (db.recipes) |r| {
+        if (r.id == selected_id) {
+            title = r.title;
+            break;
+        }
+    }
+    pending_delete_id = selected_id;
+    var window = gtk.Window.new();
+    gtk.Window.setTitle(window, "Delete recipe");
+    gtk.Window.setTransientFor(window, parent);
+    gtk.Window.setModal(window, 1);
+    gtk.Window.setDefaultSize(window, 400, 150);
+    var box = gtk.Box.new(.vertical, 6);
+    const msg = fmtZ(std.heap.page_allocator, "Delete \"{s}\"? This cannot be undone.", .{title});
+    var msg_label = gtk.Label.new(msg);
+    gtk.Label.setWrap(msg_label, 1);
+    gtk.Box.append(box, msg_label.as(gtk.Widget));
+    var row = gtk.Box.new(.horizontal, 6);
+    var confirm = gtk.Button.newWithLabel("Delete");
+    _ = gtk.Button.signals.clicked.connect(confirm, *gtk.Window, &on_delete_confirm, window, .{});
+    gtk.Box.append(row, confirm.as(gtk.Widget));
+    var cancel = gtk.Button.newWithLabel("Cancel");
+    _ = gtk.Button.signals.clicked.connect(cancel, *gtk.Window, &on_delete_cancel, window, .{});
+    gtk.Box.append(row, cancel.as(gtk.Widget));
+    gtk.Box.append(box, row.as(gtk.Widget));
+    gtk.Window.setChild(window, box.as(gtk.Widget));
+    gtk.Widget.show(window.as(gtk.Widget));
+}
+
+fn on_delete_confirm(_: *gtk.Button, window: *gtk.Window) callconv(.c) void {
+    if (pending_delete_id < 0) {
+        gtk.Window.close(window);
+        return;
+    }
+    db.deleteRecipe(pending_delete_id) catch {
+        // The dialog has no error label; surface the error
+        // as the window title so the failure is visible.
+        if (db.load_error) |e| {
+            gtk.Window.setTitle(window, e);
+        } else {
+            gtk.Window.setTitle(window, "Could not delete the recipe.");
+        }
+        return;
+    };
+    pending_delete_id = -1;
+    db.reload() catch {
+        if (db.load_error) |e| {
+            gtk.Window.setTitle(window, e);
+        } else {
+            gtk.Window.setTitle(window, "Could not reload recipes.");
+        }
+        return;
+    };
+    rebuild_list();
+    if (db.recipes.len > 0) {
+        selected_id = db.recipes[0].id;
+        show_recipe(detail_ptr, db.recipes[0]);
+        if (gtk.ListBox.getRowAtIndex(main_list_box, 0)) |row| {
+            gtk.ListBox.selectRow(main_list_box, row);
+        }
+    } else {
+        selected_id = -1;
+        clear_detail(detail_ptr);
+    }
+    gtk.Window.close(window);
+}
+
+fn on_delete_cancel(_: *gtk.Button, window: *gtk.Window) callconv(.c) void {
+    pending_delete_id = -1;
+    gtk.Window.close(window);
+}
+
 
 fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     var window = gtk.ApplicationWindow.new(app);
@@ -493,6 +592,7 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     gtk.Widget.setSizeRequest(list_scrolled.as(gtk.Widget), 250, -1);
 
     var detail = std.heap.page_allocator.create(Detail) catch @panic("oom");
+    detail_ptr = detail;
     detail.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
     var detail_box = gtk.Box.new(gtk.Orientation.vertical, 6);
@@ -519,6 +619,9 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     var edit_button = gtk.Button.newWithLabel("Edit recipe");
     _ = gtk.Button.signals.clicked.connect(edit_button, *gtk.Window, &on_edit_clicked, window.as(gtk.Window), .{});
     gtk.Box.append(detail_box, edit_button.as(gtk.Widget));
+    var delete_button = gtk.Button.newWithLabel("Delete recipe");
+    _ = gtk.Button.signals.clicked.connect(delete_button, *gtk.Window, &on_delete_clicked, window.as(gtk.Window), .{});
+    gtk.Box.append(detail_box, delete_button.as(gtk.Widget));
 
     var detail_scrolled = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(detail_scrolled, detail_box.as(gtk.Widget));

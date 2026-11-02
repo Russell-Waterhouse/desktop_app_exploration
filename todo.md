@@ -94,7 +94,7 @@ has been tested on Fedora yet.
 - [X] recipe view with SQLite integration
 - [X] add recipe
 - [X] edit recipe
-- [ ] delete recipe
+- [X] delete recipe
 - [ ] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
@@ -131,7 +131,7 @@ has been tested on Fedora yet.
 - [X] recipe view with SQLite integration
 - [X] add recipe
 - [X] edit recipe
-- [ ] delete recipe
+- [X] delete recipe
 - [ ] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)

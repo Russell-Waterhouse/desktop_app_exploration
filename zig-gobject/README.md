@@ -86,6 +86,11 @@ Edit recipe: done — an "Edit recipe" button in the
 detail pane opens the same form pre-filled with the
 selected recipe; saving updates it in place (children
 replaced) instead of inserting.
+Delete recipe: done — a "Delete recipe" button in the
+detail pane opens a confirmation dialog naming the
+recipe; confirming deletes it and its children, reloads,
+and selects the first remaining recipe (or clears the
+detail pane when none remain).
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.

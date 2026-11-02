@@ -35,11 +35,17 @@ db_error_msg: string
 // (it is modal), so the form handlers share active_form.
 db_handle: ^Sqlite_Db
 main_list_box: ^gtk.ListBox
+detail_ptr: ^Detail
 active_form: ^Form
 
 // Id of the recipe currently shown in the detail pane (-1
 // when none is selected); the Edit button acts on it.
 selected_id: i64 = -1
+
+// Id awaiting confirmation in the delete dialog (-1 when
+// no dialog is open); the dialog is modal, so this is
+// never shared between two dialogs.
+pending_delete_id: i64 = -1
 
 // Detail holds the widgets the row-selected handler updates.
 // Label widgets are stored as ^Widget (what label_new
@@ -114,6 +120,23 @@ show_recipe :: proc(d: ^Detail, r: Recipe) {
 	set_text(d.notes, r.notes)
 }
 
+// clear_detail empties the detail pane (used when the
+// last recipe has been deleted).
+clear_detail :: proc(d: ^Detail) {
+	set_text(d.title, "")
+	set_text(d.description, "")
+	set_text(d.servings, "")
+	for label in d.ingredient_labels {
+		set_text(label, "")
+		gtk.widget_set_visible(label, false)
+	}
+	for label in d.step_labels {
+		set_text(label, "")
+		gtk.widget_set_visible(label, false)
+	}
+	set_text(d.notes, "")
+}
+
 on_row_selected :: proc "c" (box: ^gtk.ListBox, row: ^gtk.ListBoxRow, data: rawptr) {
 	context = runtime.default_context()
 	if row == nil {
@@ -153,6 +176,7 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	// so the Detail must outlive this stack frame. It lives
 	// for the app's lifetime and is never freed.
 	d := new(Detail)
+	detail_ptr = d
 
 	detail_box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
 	d.title = detail_label()
@@ -183,6 +207,14 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 		window,
 	)
 	gtk.box_append(detail_box, edit_button)
+	delete_button := gtk.button_new_with_label("Delete recipe")
+	gobj.signal_connect(
+		delete_button,
+		"clicked",
+		cast(gobj.Callback)on_delete_clicked,
+		window,
+	)
+	gtk.box_append(detail_box, delete_button)
 
 	detail_scrolled := gtk.scrolled_window_new()
 	gtk.scrolled_window_set_child(
@@ -597,6 +629,98 @@ on_edit_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 			return
 		}
 	}
+}
+
+on_delete_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	if selected_id < 0 {
+		return
+	}
+	title := ""
+	for r in recipes {
+		if r.id == selected_id {
+			title = r.title
+			break
+		}
+	}
+	pending_delete_id = selected_id
+	parent := cast(^gtk.Window)data
+	window := gtk.window_new()
+	gtk.window_set_title(cast(^gtk.Window)window, "Delete recipe")
+	gtk.window_set_transient_for(cast(^gtk.Window)window, parent)
+	gtk.window_set_modal(cast(^gtk.Window)window, true)
+	gtk.window_set_default_size(cast(^gtk.Window)window, 400, 150)
+	box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
+	msg := new_label(
+		fmt.tprintf("Delete \"%s\"? This cannot be undone.", title),
+	)
+	gtk.label_set_wrap(cast(^gtk.Label)msg, true)
+	gtk.box_append(box, msg)
+	row := cast(^gtk.Box)gtk.box_new(.HORIZONTAL, 6)
+	confirm := gtk.button_new_with_label("Delete")
+	gobj.signal_connect(
+		confirm,
+		"clicked",
+		cast(gobj.Callback)on_delete_confirm,
+		window,
+	)
+	gtk.box_append(row, confirm)
+	cancel := gtk.button_new_with_label("Cancel")
+	gobj.signal_connect(
+		cancel,
+		"clicked",
+		cast(gobj.Callback)on_delete_cancel,
+		window,
+	)
+	gtk.box_append(row, cancel)
+	gtk.box_append(box, cast(^gtk.Widget)row)
+	gtk.window_set_child(cast(^gtk.Window)window, cast(^gtk.Widget)box)
+	gtk.window_present(cast(^gtk.Window)window)
+}
+
+on_delete_confirm :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	window := cast(^gtk.Window)data
+	if pending_delete_id < 0 {
+		gtk.window_destroy(window)
+		return
+	}
+	if err := delete_recipe(db_handle, pending_delete_id); err != "" {
+		// The dialog has no error label; surface the error
+		// as the window title so the failure is visible.
+		cs := strings.clone_to_cstring(err)
+		defer delete(cs)
+		gtk.window_set_title(window, cs)
+		return
+	}
+	pending_delete_id = -1
+	loaded, load_err := load_recipes(db_handle)
+	if load_err != "" {
+		cs := strings.clone_to_cstring(load_err)
+		defer delete(cs)
+		gtk.window_set_title(window, cs)
+		return
+	}
+	recipes = loaded
+	rebuild_list()
+	if len(recipes) > 0 {
+		selected_id = recipes[0].id
+		show_recipe(detail_ptr, recipes[0])
+		row := gtk.list_box_get_row_at_index(main_list_box, 0)
+		if row != nil {
+			gtk.list_box_select_row(main_list_box, row)
+		}
+	} else {
+		selected_id = -1
+		clear_detail(detail_ptr)
+	}
+	gtk.window_destroy(window)
+}
+
+on_delete_cancel :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	pending_delete_id = -1
+	gtk.window_destroy(cast(^gtk.Window)data)
 }
 
 main :: proc() {
