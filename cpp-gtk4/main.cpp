@@ -94,6 +94,10 @@ GtkWidget* make_label(const std::string& text, bool wrap) {
     GtkWidget* label = gtk_label_new(text.c_str());
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
     gtk_label_set_wrap(GTK_LABEL(label), wrap);
+    // Display text is user-selectable (highlight to copy), including
+    // the complex-text recipes: the label holds real text, so Pango
+    // shaping and selection work together here.
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
     return label;
 }
 
@@ -104,6 +108,7 @@ GtkWidget* make_heading(const std::string& text) {
     g_free(escaped);
     gtk_label_set_markup(GTK_LABEL(label), markup.c_str());
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
     return label;
 }
 
@@ -327,6 +332,7 @@ void rebuild_list(App* app) {
         }
         GtkWidget* label = gtk_label_new(recipe.title.c_str());
         gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+        gtk_label_set_selectable(GTK_LABEL(label), TRUE);
         gtk_box_append(GTK_BOX(row_box), label);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
         gtk_list_box_append(GTK_LIST_BOX(app->list_box), row);
@@ -422,6 +428,7 @@ void refresh_detail(App* app) {
     g_free(escaped);
     gtk_label_set_markup(GTK_LABEL(title), markup.c_str());
     gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+    gtk_label_set_selectable(GTK_LABEL(title), TRUE);
     gtk_box_append(GTK_BOX(app->detail_box), title);
     gtk_box_append(GTK_BOX(app->detail_box),
                    make_label(recipe->description, true));
@@ -790,6 +797,7 @@ void open_edit_window(App* app, const Recipe* recipe) {
 
     form->error_label = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(form->error_label), 0.0);
+    gtk_label_set_selectable(GTK_LABEL(form->error_label), TRUE);
     gtk_box_append(GTK_BOX(content), form->error_label);
 
     GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
