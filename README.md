@@ -22,7 +22,7 @@ This repo is for choosing a desktop application development stack. See `plan.md`
   - Raylib + Raygui
   - microui
 - Zig:
-  - DVUI
+  - DVUI — no longer under consideration (Nov 2026): DVUI cannot display selectable complex text, which the test app requires. Its text widgets either don't shape — plain labels and the selectable `textLayout` widget render one glyph per codepoint, so Arabic, Devanagari, and emoji fail — or render shaped text as images (via kb, HarfBuzz, or Pango), which the user can't highlight to copy. No solution in the Zig ecosystem was found that gives DVUI selectable shaped text: the shaping packages found (e.g. `ztypeset`, which vendors FreeType/HarfBuzz/SheenBidi) shape and rasterize but provide no selectable widget.
 - Backends underneath, not counted as UI frameworks:
   - SDL
   - Sokol
