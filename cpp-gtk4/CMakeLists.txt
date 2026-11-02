@@ -57,6 +57,13 @@ add_executable(cpp-gtk4-test-search
     test_search.cpp
 )
 
+# test-text-undo links only the undo helper (no GTK, no SQLite),
+# so it also builds with plain g++:
+#   g++ -std=c++17 -Wall -Wextra test_text_undo.cpp -o /tmp/test_text_undo
+add_executable(cpp-gtk4-test-text-undo
+    test_text_undo.cpp
+)
+
 add_executable(cpp-gtk4-test-json-import
     test_json_import.cpp
     json_import.cpp

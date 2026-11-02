@@ -46,10 +46,11 @@ and never open the real `recipes.db`.
 
 ```sh
 cmake -S . -B build
-cmake --build build --target cpp-gtk4-test-search cpp-gtk4-test-db cpp-gtk4-test-json-import
+cmake --build build --target cpp-gtk4-test-search cpp-gtk4-test-db cpp-gtk4-test-json-import cpp-gtk4-test-text-undo
 ./build/cpp-gtk4-test-search
 ./build/cpp-gtk4-test-db
 ./build/cpp-gtk4-test-json-import
+./build/cpp-gtk4-test-text-undo
 ```
 
 The search test links nothing but `search.h`, so it also builds
@@ -133,6 +134,14 @@ g++ -std=c++17 -Wall -Wextra -pthread test_json_import.cpp json_import.cpp -o /t
   accepts-tab off, so Tab moves focus to the next field instead
   of inserting a tab character (the default would trap
   keyboard-only users in those fields).
+- GTK4's entries and text views have no built-in undo, so the
+  form implements it: one `TextUndo` (`text_undo.h`, pure logic,
+  unit-tested) per text widget, driven by a key controller on
+  the form window — Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo,
+  in whichever text widget has focus. Typing runs less than a
+  second apart coalesce into one undo step. The servings spin
+  button is left out on purpose: its input is already
+  constrained to whole numbers.
 - The add/edit window scrolls: with several ingredient/step rows
   the Save/Cancel buttons fall below the fold and must be
   scrolled into view. That is the scrolled window working as

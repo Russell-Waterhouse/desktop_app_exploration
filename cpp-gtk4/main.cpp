@@ -24,6 +24,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -33,6 +34,7 @@
 #include "json_import.h"
 #include "images.h"
 #include "search.h"
+#include "text_undo.h"
 
 // How long a list/detail transition takes, in seconds.
 const double DETAIL_ANIM_SECONDS = 0.25;
@@ -546,6 +548,151 @@ void on_search_changed(GtkSearchEntry* entry, gpointer data) {
     rebuild_list(app);
 }
 
+// --- Per-field undo/redo for the form ---
+//
+// GTK4's GtkEntry and GtkTextView have no built-in undo, so
+// each form text widget gets a TextUndo (text_undo.h), freed
+// with the widget. The servings spin button is left out on
+// purpose: its input is already constrained to the 1..1000
+// range, so there is no free text to undo.
+
+TextUndo* widget_undo(GtkWidget* widget) {
+    return static_cast<TextUndo*>(
+        g_object_get_data(G_OBJECT(widget), "text-undo"));
+}
+
+void apply_snapshot_to_editable(GtkWidget* entry, const TextSnapshot& snapshot,
+                                TextUndo* undo) {
+    undo->set_applying(true);
+    gtk_editable_set_text(GTK_EDITABLE(entry), snapshot.text.c_str());
+    gtk_editable_set_position(GTK_EDITABLE(entry), snapshot.cursor);
+    undo->set_applying(false);
+}
+
+void apply_snapshot_to_text_view(GtkWidget* view, const TextSnapshot& snapshot,
+                                 TextUndo* undo) {
+    GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
+    undo->set_applying(true);
+    gtk_text_buffer_set_text(buffer, snapshot.text.c_str(), -1);
+    GtkTextIter iter;
+    // Clamps out-of-range offsets, so a stale cursor is safe.
+    gtk_text_buffer_get_iter_at_offset(buffer, &iter, snapshot.cursor);
+    gtk_text_buffer_place_cursor(buffer, &iter);
+    undo->set_applying(false);
+}
+
+void on_entry_changed(GtkEditable* editable, gpointer /*data*/) {
+    TextUndo* undo = widget_undo(GTK_WIDGET(editable));
+    if (undo == nullptr) {
+        return;
+    }
+    const char* text = gtk_editable_get_text(editable);
+    undo->record(text != nullptr ? text : "",
+                 gtk_editable_get_position(editable));
+}
+
+void on_text_buffer_changed(GtkTextBuffer* buffer, gpointer data) {
+    GtkWidget* view = GTK_WIDGET(data);
+    TextUndo* undo = widget_undo(view);
+    if (undo == nullptr) {
+        return;
+    }
+    GtkTextIter start, end;
+    gtk_text_buffer_get_start_iter(buffer, &start);
+    gtk_text_buffer_get_end_iter(buffer, &end);
+    char* text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+    GtkTextIter cursor_iter;
+    gtk_text_buffer_get_iter_at_mark(
+        buffer, &cursor_iter, gtk_text_buffer_get_insert(buffer));
+    undo->record(text != nullptr ? text : "",
+                 gtk_text_iter_get_offset(&cursor_iter));
+    g_free(text);
+}
+
+// Seeded with the widget's current contents, so the first undo
+// returns to the prefilled (or empty) text, not to nothing.
+void attach_entry_undo(GtkWidget* entry) {
+    auto* undo = new TextUndo();
+    const char* text = gtk_editable_get_text(GTK_EDITABLE(entry));
+    undo->seed(text != nullptr ? text : "",
+               gtk_editable_get_position(GTK_EDITABLE(entry)));
+    g_object_set_data_full(
+        G_OBJECT(entry), "text-undo", undo,
+        +[](gpointer data) { delete static_cast<TextUndo*>(data); });
+    g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), nullptr);
+}
+
+void attach_text_view_undo(GtkWidget* view) {
+    auto* undo = new TextUndo();
+    GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
+    GtkTextIter cursor_iter;
+    gtk_text_buffer_get_iter_at_mark(
+        buffer, &cursor_iter, gtk_text_buffer_get_insert(buffer));
+    undo->seed(text_view_text(view), gtk_text_iter_get_offset(&cursor_iter));
+    g_object_set_data_full(
+        G_OBJECT(view), "text-undo", undo,
+        +[](gpointer data) { delete static_cast<TextUndo*>(data); });
+    g_signal_connect(buffer, "changed", G_CALLBACK(on_text_buffer_changed),
+                     view);
+}
+
+// Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo, in whichever form
+// text widget has focus. Shift+Z reports keyval Z (not z with a
+// shift modifier), so undo and redo need separate keyvals.
+// Anything without a TextUndo (buttons, the spin button) falls
+// through untouched.
+gboolean on_form_key_pressed(GtkEventControllerKey* /*controller*/,
+                             guint keyval, guint /*keycode*/,
+                             GdkModifierType state, gpointer data) {
+    if ((state & GDK_CONTROL_MASK) == 0) {
+        return FALSE;
+    }
+    const bool is_undo = keyval == GDK_KEY_z;
+    const bool is_redo = keyval == GDK_KEY_Z || keyval == GDK_KEY_y;
+    if (!is_undo && !is_redo) {
+        return FALSE;
+    }
+    GtkWidget* window = GTK_WIDGET(data);
+    GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(window));
+    if (focus == nullptr) {
+        return FALSE;
+    }
+    TextUndo* undo = widget_undo(focus);
+    if (undo == nullptr) {
+        return FALSE;
+    }
+    if (GTK_IS_EDITABLE(focus)) {
+        const char* text = gtk_editable_get_text(GTK_EDITABLE(focus));
+        std::string current = text != nullptr ? text : "";
+        int cursor = gtk_editable_get_position(GTK_EDITABLE(focus));
+        std::optional<TextSnapshot> snapshot =
+            is_undo ? undo->undo(current, cursor) : undo->redo(current, cursor);
+        if (!snapshot.has_value()) {
+            return TRUE;
+        }
+        apply_snapshot_to_editable(focus, *snapshot, undo);
+        return TRUE;
+    }
+    if (GTK_IS_TEXT_VIEW(focus)) {
+        GtkTextBuffer* buffer =
+            gtk_text_view_get_buffer(GTK_TEXT_VIEW(focus));
+        GtkTextIter cursor_iter;
+        gtk_text_buffer_get_iter_at_mark(
+            buffer, &cursor_iter, gtk_text_buffer_get_insert(buffer));
+        std::optional<TextSnapshot> snapshot =
+            is_undo ? undo->undo(text_view_text(focus),
+                                 gtk_text_iter_get_offset(&cursor_iter))
+                    : undo->redo(text_view_text(focus),
+                                 gtk_text_iter_get_offset(&cursor_iter));
+        if (!snapshot.has_value()) {
+            return TRUE;
+        }
+        apply_snapshot_to_text_view(focus, *snapshot, undo);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 // --- Add / edit ---
 
 struct IngredientRowWidgets {
@@ -591,6 +738,9 @@ void add_ingredient_row(EditForm* form, const std::string& amount,
     gtk_editable_set_text(GTK_EDITABLE(amount_entry), amount.c_str());
     gtk_editable_set_text(GTK_EDITABLE(unit_entry), unit.c_str());
     gtk_editable_set_text(GTK_EDITABLE(name_entry), name.c_str());
+    attach_entry_undo(amount_entry);
+    attach_entry_undo(unit_entry);
+    attach_entry_undo(name_entry);
     gtk_widget_set_size_request(amount_entry, 70, -1);
     gtk_widget_set_size_request(unit_entry, 70, -1);
     gtk_widget_set_hexpand(name_entry, TRUE);
@@ -622,6 +772,7 @@ void add_step_row(EditForm* form, const std::string& text) {
     GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget* entry = gtk_entry_new();
     gtk_editable_set_text(GTK_EDITABLE(entry), text.c_str());
+    attach_entry_undo(entry);
     gtk_widget_set_hexpand(entry, TRUE);
     GtkWidget* remove = gtk_button_new_with_label("Remove");
     gtk_box_append(GTK_BOX(row), entry);
@@ -738,11 +889,18 @@ void open_edit_window(App* app, const Recipe* recipe) {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), content);
     gtk_window_set_child(GTK_WINDOW(window), scrolled);
 
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y for the form's text widgets.
+    GtkEventController* key_controller = gtk_event_controller_key_new();
+    g_signal_connect(key_controller, "key-pressed",
+                     G_CALLBACK(on_form_key_pressed), window);
+    gtk_widget_add_controller(window, key_controller);
+
     gtk_box_append(GTK_BOX(content), make_label("Title:", false));
     form->title_entry = gtk_entry_new();
     if (!is_new) {
         gtk_editable_set_text(GTK_EDITABLE(form->title_entry), recipe->title.c_str());
     }
+    attach_entry_undo(form->title_entry);
     gtk_box_append(GTK_BOX(content), form->title_entry);
 
     gtk_box_append(GTK_BOX(content), make_label("Servings:", false));
@@ -757,6 +915,7 @@ void open_edit_window(App* app, const Recipe* recipe) {
     GtkWidget* desc_scrolled =
         make_text_view(is_new ? "" : recipe->description, 80);
     form->description_view = text_view_of(desc_scrolled);
+    attach_text_view_undo(form->description_view);
     gtk_box_append(GTK_BOX(content), desc_scrolled);
 
     gtk_box_append(GTK_BOX(content), make_heading("Ingredients"));
@@ -797,6 +956,7 @@ void open_edit_window(App* app, const Recipe* recipe) {
     GtkWidget* notes_scrolled =
         make_text_view(is_new ? "" : recipe->notes, 80);
     form->notes_view = text_view_of(notes_scrolled);
+    attach_text_view_undo(form->notes_view);
     gtk_box_append(GTK_BOX(content), notes_scrolled);
 
     form->error_label = gtk_label_new("");
