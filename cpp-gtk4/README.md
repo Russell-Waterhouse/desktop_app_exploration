@@ -13,8 +13,8 @@ asynchronous image loading with a spinner state, and URL JSON
 import (see below).
 
 Recipes are stored in `recipes.db` in the current working directory,
-created on first run and seeded with 3 recipes (19 ingredients,
-13 steps). `recipes.db` and `images/` are git-ignored.
+created on first run and seeded with 7 recipes (27 ingredients,
+21 steps). `recipes.db` and `images/` are git-ignored.
 
 ## Build
 

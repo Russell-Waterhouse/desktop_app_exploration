@@ -106,11 +106,11 @@ int main() {
         return 1;
     }
 
-    // --- Seed: 3 recipes, ingredients and steps preserved, in order.
+    // --- Seed: 7 recipes, ingredients and steps preserved, in order.
     check(init_and_seed(db, error), "seed temp database: " + error);
     std::vector<Recipe> recipes;
     check(load_recipes(db, recipes, error), "load seeded recipes: " + error);
-    check(recipes.size() == 3, "seed loads exactly 3 recipes");
+    check(recipes.size() == 7, "seed loads exactly 7 recipes");
     {
         std::vector<Recipe> expected = seed_recipes();
         check(recipes.size() == expected.size(),
@@ -125,32 +125,42 @@ int main() {
             total_ingredients += recipes[i].ingredients.size();
             total_steps += recipes[i].steps.size();
         }
-        check(total_ingredients == 19, "seed has 19 ingredients total");
-        check(total_steps == 13, "seed has 13 steps total");
-        if (recipes.size() == 3) {
+        check(total_ingredients == 27, "seed has 27 ingredients total");
+        check(total_steps == 21, "seed has 21 steps total");
+        if (recipes.size() == 7) {
             check(recipes[0].ingredients.size() == 7 &&
                       recipes[1].ingredients.size() == 6 &&
-                      recipes[2].ingredients.size() == 6,
-                  "seed ingredient counts are 7/6/6");
+                      recipes[2].ingredients.size() == 6 &&
+                      recipes[3].ingredients.size() == 2 &&
+                      recipes[4].ingredients.size() == 2 &&
+                      recipes[5].ingredients.size() == 2 &&
+                      recipes[6].ingredients.size() == 2,
+                  "seed ingredient counts are 7/6/6/2/2/2/2");
             check(recipes[0].steps.size() == 5 &&
                       recipes[1].steps.size() == 4 &&
-                      recipes[2].steps.size() == 4,
-                  "seed step counts are 5/4/4");
+                      recipes[2].steps.size() == 4 &&
+                      recipes[3].steps.size() == 2 &&
+                      recipes[4].steps.size() == 2 &&
+                      recipes[5].steps.size() == 2 &&
+                      recipes[6].steps.size() == 2,
+                  "seed step counts are 5/4/4/2/2/2/2");
             check(recipes[0].servings == 8 && recipes[1].servings == 4 &&
-                      recipes[2].servings == 4,
-                  "seed servings are 8/4/4");
+                      recipes[2].servings == 4 && recipes[3].servings == 4 &&
+                      recipes[4].servings == 4 && recipes[5].servings == 2 &&
+                      recipes[6].servings == 4,
+                  "seed servings are 8/4/4/4/4/2/4");
         }
     }
 
     // --- Seeding twice does not duplicate recipes.
     check(init_and_seed(db, error), "second seed call: " + error);
     check(load_recipes(db, recipes, error), "reload after second seed: " + error);
-    check(recipes.size() == 3, "second seed still leaves exactly 3 recipes");
-    check(recipes.size() == 3 &&
+    check(recipes.size() == 7, "second seed still leaves exactly 7 recipes");
+    check(recipes.size() == 7 &&
               recipes[0].title == "Banana Bread" &&
               recipes[1].title == "Tomato Basil Pasta" &&
               recipes[2].title == "Chicken Stir Fry",
-          "second seed leaves the same 3 titles, no duplicates");
+          "second seed leaves the same 7 titles, no duplicates");
 
     // --- Insert round-trip.
     Recipe inserted;
@@ -164,7 +174,7 @@ int main() {
     check(inserted.id != 0, "insert sets a non-zero id");
     long long inserted_id = inserted.id;
     check(load_recipes(db, recipes, error), "reload after insert: " + error);
-    check(recipes.size() == 4, "insert grows the list to 4 recipes");
+    check(recipes.size() == 8, "insert grows the list to 8 recipes");
     {
         const Recipe* got = find_by_title(recipes, "Test Soup");
         check(got != nullptr, "inserted recipe is loadable by title");
@@ -183,7 +193,7 @@ int main() {
     updated.steps = {"Heat the stock.", "Serve.", "Clean up."};
     check(update_recipe(db, updated, error), "update recipe: " + error);
     check(load_recipes(db, recipes, error), "reload after update: " + error);
-    check(recipes.size() == 4, "update keeps the list at 4 recipes");
+    check(recipes.size() == 8, "update keeps the list at 8 recipes");
     check(find_by_title(recipes, "Test Soup") == nullptr,
           "update removes the old title");
     {
@@ -199,7 +209,7 @@ int main() {
     // --- Delete round-trip: removes the recipe and its children.
     check(delete_recipe(db, inserted_id, error), "delete recipe: " + error);
     check(load_recipes(db, recipes, error), "reload after delete: " + error);
-    check(recipes.size() == 3, "delete shrinks the list back to 3 recipes");
+    check(recipes.size() == 7, "delete shrinks the list back to 7 recipes");
     check(find_by_title(recipes, "Test Soup Revised") == nullptr,
           "deleted recipe is gone");
     check(child_count(db, "ingredients", inserted_id) == 0,

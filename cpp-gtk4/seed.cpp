@@ -1,7 +1,11 @@
 #include "seed.h"
 
-// Seed data: the same 3 recipes the other stacks use (7 + 6 + 6
-// ingredients, 5 + 4 + 4 steps: 19 ingredients, 13 steps total).
+// Seed data: the same 3 recipes the other stacks use, plus the
+// same 4 complex-text recipes (Arabic, Devanagari, Simplified
+// Chinese, emoji). GTK renders them correctly through Pango with
+// no extra font configuration. Counts with them: 7 + 6 + 6 + 2 +
+// 2 + 2 + 2 ingredients, 5 + 4 + 4 + 2 + 2 + 2 + 2 steps: 27
+// ingredients, 21 steps total.
 std::vector<Recipe> seed_recipes() {
     return {
         {
@@ -71,6 +75,72 @@ std::vector<Recipe> seed_recipes() {
                 "Cook for 2 more minutes, stirring, until the sauce coats everything.",
             },
             "Serve over rice.",
+        },
+        // Complex-text recipes (Arabic, Devanagari, Simplified
+        // Chinese, emoji), matching the other stacks.
+        {
+            0,
+            "كبسة الدجاج",
+            "طبق أرز تقليدي مع الدجاج والبهارات المشكلة.",
+            4,
+            "",
+            {
+                {"1", "", "دجاج"},
+                {"2", "كوب", "أرز بسمتي"},
+            },
+            {
+                "يُتبل الدجاج بالبهارات ويُحمر.",
+                "يُضاف الأرز والمرق ويُطهى حتى ينضج.",
+            },
+            "تُقدم مع السلطة.",
+        },
+        {
+            0,
+            "पालक पनीर",
+            "पालक और पनीर से बना एक लोकप्रिय उत्तर भारतीय व्यंजन।",
+            4,
+            "",
+            {
+                {"500", "ग्राम", "पालक"},
+                {"200", "ग्राम", "पनीर"},
+            },
+            {
+                "पालक को उबालकर पीस लें।",
+                "पनीर डालकर धीमी आंच पर पकाएं।",
+            },
+            "रोटी या चावल के साथ परोसें।",
+        },
+        {
+            0,
+            "番茄炒蛋",
+            "一道简单快捷的家常菜，酸甜可口，老少皆宜。",
+            2,
+            "",
+            {
+                {"2", "个", "番茄"},
+                {"3", "个", "鸡蛋"},
+            },
+            {
+                "鸡蛋打散，入锅炒熟盛出。",
+                "番茄炒软后加入鸡蛋，调味出锅。",
+            },
+            "配米饭食用最佳。",
+        },
+        {
+            0,
+            "🥞 Blueberry Pancakes 🫐",
+            "Fluffy pancakes with 🫐 blueberries, served with 🍁 maple syrup.",
+            4,
+            "",
+            {
+                {"2", "cups", "flour"},
+                {"1", "cup", "🫐 blueberries"},
+            },
+            {
+                "Mix the batter and fold in the 🫐 blueberries.",
+                "Cook on a hot griddle until golden, then serve with 🍁 syrup.",
+            },
+            "Extra 🫐 on top never hurts.",
         },
     };
 }
