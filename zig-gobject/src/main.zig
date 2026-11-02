@@ -1,9 +1,9 @@
 // Recipe list and detail view, backed by SQLite: recipes
-// are loaded from recipes.db (seeded on first run with the
-// same 3 recipes the other stacks start with). The list is
-// a GtkListBox; selecting a row fills the detail pane on
-// the right. See db.zig (SQLite layer); the seed data is
-// below, passed to db.ensureLoaded() by main(). "Add recipe"
+// are loaded from recipes.db (seeded on first run; see
+// recipes.zig for the seed data, passed to
+// db.ensureLoaded() by main()). The list is a GtkListBox;
+// selecting a row fills the detail pane on the right. See
+// db.zig (SQLite layer). "Add recipe"
 // opens a form window (title required, servings spin
 // button, dynamic ingredient and step rows); saving inserts
 // into the database, reloads, and selects the new recipe.
@@ -19,71 +19,18 @@ const std = @import("std");
 const db = @import("db.zig");
 const gio = @import("gio");
 const gtk = @import("gtk");
+const glib = @import("glib");
+const gobject = @import("gobject");
+const gdk = @import("gdk");
+const gdkpixbuf = @import("gdkpixbuf");
+const search = @import("search.zig");
+const recipes = @import("recipes.zig");
+const json_import = @import("json_import.zig");
+const json_export = @import("json_export.zig");
+const image_files = @import("image_files.zig");
 
-const seed_recipes = [_]db.Recipe{
-    .{
-        .title = "Banana Bread",
-        .description = "A classic loaf, best with very ripe bananas.",
-        .servings = 8,
-        .ingredients = &.{
-            .{ .amount = "3", .unit = "", .name = "ripe bananas, mashed" },
-            .{ .amount = "1/2", .unit = "cup", .name = "butter, melted" },
-            .{ .amount = "3/4", .unit = "cup", .name = "sugar" },
-            .{ .amount = "1", .unit = "", .name = "egg" },
-            .{ .amount = "1", .unit = "tsp", .name = "vanilla" },
-            .{ .amount = "1", .unit = "tsp", .name = "baking soda" },
-            .{ .amount = "1 1/2", .unit = "cups", .name = "flour" },
-        },
-        .steps = &.{
-            "Preheat the oven to 350°F and grease a 9x5 loaf pan.",
-            "Mash the bananas, then stir in the melted butter, sugar, egg, and vanilla.",
-            "Stir in the baking soda and flour until just combined.",
-            "Pour into the pan and bake for 55-65 minutes, until a toothpick comes out clean.",
-            "Cool in the pan for 10 minutes, then turn out onto a rack.",
-        },
-        .notes = "Optional: fold in walnuts or chocolate chips before baking.",
-    },
-    .{
-        .title = "Tomato Basil Pasta",
-        .description = "A quick weeknight pasta with fresh tomatoes and basil.",
-        .servings = 4,
-        .ingredients = &.{
-            .{ .amount = "12", .unit = "oz", .name = "pasta" },
-            .{ .amount = "2", .unit = "lbs", .name = "tomatoes, chopped" },
-            .{ .amount = "3", .unit = "cloves", .name = "garlic, sliced" },
-            .{ .amount = "1/4", .unit = "cup", .name = "olive oil" },
-            .{ .amount = "1", .unit = "cup", .name = "basil leaves" },
-            .{ .amount = "1/2", .unit = "cup", .name = "parmesan, grated" },
-        },
-        .steps = &.{
-            "Cook the pasta in salted water until al dente, reserving a cup of pasta water.",
-            "Meanwhile, warm the olive oil and garlic until fragrant, about 2 minutes.",
-            "Add the tomatoes and cook until they soften, about 8 minutes.",
-            "Toss the pasta with the sauce, basil, and parmesan, adding pasta water as needed.",
-        },
-        .notes = "Serve immediately, with extra parmesan on top.",
-    },
-    .{
-        .title = "Chicken Stir Fry",
-        .description = "Chicken and vegetables in a simple soy-ginger sauce, served with rice.",
-        .servings = 4,
-        .ingredients = &.{
-            .{ .amount = "1 1/2", .unit = "lbs", .name = "chicken breast, sliced" },
-            .{ .amount = "2", .unit = "", .name = "bell peppers, sliced" },
-            .{ .amount = "2", .unit = "cups", .name = "broccoli florets" },
-            .{ .amount = "3", .unit = "tbsp", .name = "soy sauce" },
-            .{ .amount = "1", .unit = "tbsp", .name = "ginger, grated" },
-            .{ .amount = "2", .unit = "cloves", .name = "garlic, minced" },
-        },
-        .steps = &.{
-            "Sear the chicken in a hot, oiled pan until cooked through, then set aside.",
-            "Stir fry the peppers and broccoli until just tender, about 4 minutes.",
-            "Return the chicken to the pan with the soy sauce, ginger, and garlic.",
-            "Cook for 2 more minutes, stirring, until the sauce coats everything.",
-        },
-        .notes = "Serve over rice.",
-    },
-};
+extern fn g_free(?*anyopaque) void;
+
 
 // Detail holds the widgets the row-selected handler updates.
 // The ingredient/step label slots are fixed at the largest
@@ -98,6 +45,12 @@ const Detail = struct {
     notes: *gtk.Label,
     ingredient_labels: [7]*gtk.Label,
     step_labels: [5]*gtk.Label,
+    // Detail photo area, at the top of the detail pane:
+    // the picture itself, a spinner box shown while the
+    // worker decodes, and a status line for load failures.
+    image_picture: *gtk.Picture,
+    image_spinner_box: *gtk.Widget,
+    image_status: *gtk.Label,
     arena: std.heap.ArenaAllocator,
 };
 
@@ -140,11 +93,14 @@ fn show_recipe(detail: *Detail, recipe: db.Recipe) void {
     }
 
     gtk.Label.setText(detail.notes, recipe.notes);
+    set_detail_image(recipe.image_path);
+    start_detail_transition();
 }
 
 // clear_detail empties the detail pane (used when the
 // last recipe has been deleted).
 fn clear_detail(detail: *Detail) void {
+    set_detail_image("");
     gtk.Label.setText(detail.title, "");
     gtk.Label.setText(detail.description, "");
     gtk.Label.setText(detail.servings, "");
@@ -157,6 +113,266 @@ fn clear_detail(detail: *Detail) void {
         gtk.Widget.setVisible(label.as(gtk.Widget), 0);
     }
     gtk.Label.setText(detail.notes, "");
+}
+
+
+// --- Detail photo loading ---
+//
+// Decoding runs on a worker thread (GdkPixbuf decode +
+// down-scale to fit 400x300); the main thread, in the
+// tick callback below, turns finished pixbufs into
+// GtkPicture paintables. Pixbufs are kept in a map by
+// path (so list rebuilds can re-texture rows without
+// re-decoding); failed paths are remembered and never
+// retried.
+
+const ImageJob = struct {
+    path: [:0]const u8,
+    // Same atomic pattern as json_import's Slot: the
+    // worker writes pixbuf/failed, then release-stores
+    // done; the tick acquire-loads done before reading.
+    done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    pixbuf: ?*gdkpixbuf.Pixbuf = null,
+    failed: bool = false,
+};
+
+const ImageRowRef = struct {
+    path: [:0]const u8,
+    picture: *gtk.Picture,
+    spinner: *gtk.Spinner,
+    placeholder: *gtk.Widget,
+};
+
+var image_jobs: std.ArrayList(*ImageJob) = .empty;
+var image_pixbufs: std.StringHashMap(*gdkpixbuf.Pixbuf) = undefined;
+var image_failed: std.StringHashMap(void) = undefined;
+var image_row_refs: std.ArrayList(ImageRowRef) = .empty;
+var detail_image_path: [:0]const u8 = "";
+var detail_box_widget: *gtk.Widget = undefined;
+var main_window: *gtk.Window = undefined;
+var transition_active: bool = false;
+var transition_start_ms: i64 = 0;
+
+fn imageWorker(job: *ImageJob) void {
+    const pixbuf = gdkpixbuf.Pixbuf.newFromFile(job.path.ptr, null) orelse {
+        job.failed = true;
+        job.done.store(true, .release);
+        return;
+    };
+    // Scale down-only to fit 400x300, preserving aspect.
+    const w = gdkpixbuf.Pixbuf.getWidth(pixbuf);
+    const h = gdkpixbuf.Pixbuf.getHeight(pixbuf);
+    var final = pixbuf;
+    if (w > 400 or h > 300) {
+        const scale = @min(400.0 / @as(f64, @floatFromInt(w)), 300.0 / @as(f64, @floatFromInt(h)));
+        const nw: c_int = @intFromFloat(@as(f64, @floatFromInt(w)) * scale);
+        const nh: c_int = @intFromFloat(@as(f64, @floatFromInt(h)) * scale);
+        if (gdkpixbuf.Pixbuf.scaleSimple(pixbuf, nw, nh, .bilinear)) |scaled| {
+            final = scaled;
+        }
+    }
+    job.pixbuf = final;
+    job.done.store(true, .release);
+}
+
+fn start_image_job(path: [:0]const u8) void {
+    for (image_jobs.items) |j| {
+        if (std.mem.eql(u8, j.path, path)) return;
+    }
+    const job = std.heap.page_allocator.create(ImageJob) catch return;
+    job.* = .{ .path = path };
+    image_jobs.append(std.heap.page_allocator, job) catch {
+        std.heap.page_allocator.destroy(job);
+        return;
+    };
+    const thread = std.Thread.spawn(.{}, imageWorker, .{job}) catch {
+        _ = image_jobs.pop();
+        std.heap.page_allocator.destroy(job);
+        return;
+    };
+    thread.detach();
+}
+
+/// Show the detail photo for detail_image_path, or the
+/// spinner while it loads, or the failure status.
+fn refresh_detail_image() void {
+    const path = detail_image_path;
+    if (path.len == 0) {
+        gtk.Widget.setVisible(detail_ptr.image_picture.as(gtk.Widget), 0);
+        gtk.Widget.setVisible(detail_ptr.image_spinner_box, 0);
+        gtk.Widget.setVisible(detail_ptr.image_status.as(gtk.Widget), 0);
+        return;
+    }
+    if (image_pixbufs.get(path)) |pb| {
+        const texture = gdk.Texture.newForPixbuf(pb);
+        gtk.Picture.setPaintable(detail_ptr.image_picture, texture.as(gdk.Paintable));
+        gtk.Widget.setVisible(detail_ptr.image_picture.as(gtk.Widget), 1);
+        gtk.Widget.setVisible(detail_ptr.image_spinner_box, 0);
+        gtk.Widget.setVisible(detail_ptr.image_status.as(gtk.Widget), 0);
+    } else if (image_failed.contains(path)) {
+        gtk.Widget.setVisible(detail_ptr.image_picture.as(gtk.Widget), 0);
+        gtk.Widget.setVisible(detail_ptr.image_spinner_box, 0);
+        gtk.Label.setText(detail_ptr.image_status, "Could not load image.");
+        gtk.Widget.setVisible(detail_ptr.image_status.as(gtk.Widget), 1);
+    } else {
+        gtk.Widget.setVisible(detail_ptr.image_picture.as(gtk.Widget), 0);
+        gtk.Widget.setVisible(detail_ptr.image_spinner_box, 1);
+        gtk.Widget.setVisible(detail_ptr.image_status.as(gtk.Widget), 0);
+        start_image_job(path);
+    }
+}
+
+fn set_detail_image(path: [:0]const u8) void {
+    detail_image_path = path;
+    refresh_detail_image();
+}
+
+fn poll_image_jobs() void {
+    var i: usize = 0;
+    while (i < image_jobs.items.len) {
+        const job = image_jobs.items[i];
+        if (!job.done.load(.acquire)) {
+            i += 1;
+            continue;
+        }
+        const pixbuf = job.pixbuf;
+        const failed = job.failed;
+        _ = image_jobs.orderedRemove(i);
+        if (failed) {
+            image_failed.put(job.path, {}) catch {};
+            if (std.mem.eql(u8, job.path, detail_image_path)) {
+                refresh_detail_image();
+            }
+            for (image_row_refs.items) |ref| {
+                if (std.mem.eql(u8, ref.path, job.path)) {
+                    gtk.Spinner.stop(ref.spinner);
+                    gtk.Widget.setVisible(ref.spinner.as(gtk.Widget), 0);
+                    gtk.Widget.setVisible(ref.placeholder, 1);
+                }
+            }
+        } else if (pixbuf) |pb| {
+            image_pixbufs.put(job.path, pb) catch {};
+            refresh_detail_image();
+            for (image_row_refs.items) |ref| {
+                if (std.mem.eql(u8, ref.path, job.path)) {
+                    const texture = gdk.Texture.newForPixbuf(pb);
+                    gtk.Picture.setPaintable(ref.picture, texture.as(gdk.Paintable));
+                    gtk.Spinner.stop(ref.spinner);
+                    gtk.Widget.setVisible(ref.spinner.as(gtk.Widget), 0);
+                    gtk.Widget.setVisible(ref.picture.as(gtk.Widget), 1);
+                }
+            }
+        }
+        std.heap.page_allocator.destroy(job);
+    }
+}
+
+/// Start loads for every visible row that has an image
+/// and is neither decoded nor failed nor already loading.
+fn start_image_loads() void {
+    for (image_row_refs.items) |ref| {
+        if (image_pixbufs.get(ref.path)) |pb| {
+            const texture = gdk.Texture.newForPixbuf(pb);
+            gtk.Picture.setPaintable(ref.picture, texture.as(gdk.Paintable));
+            gtk.Widget.setVisible(ref.placeholder, 0);
+            gtk.Widget.setVisible(ref.picture.as(gtk.Widget), 1);
+        } else if (image_failed.contains(ref.path)) {
+            // Leave the placeholder visible.
+        } else {
+            gtk.Widget.setVisible(ref.placeholder, 0);
+            gtk.Widget.setVisible(ref.spinner.as(gtk.Widget), 1);
+            gtk.Spinner.start(ref.spinner);
+            start_image_job(ref.path);
+        }
+    }
+}
+
+// --- Detail fade ---
+
+fn start_detail_transition() void {
+    transition_active = true;
+    transition_start_ms = glib.getMonotonicTime();
+    gtk.Widget.setOpacity(detail_box_widget, 0);
+}
+
+fn step_transition() void {
+    if (!transition_active) return;
+    const elapsed_us = glib.getMonotonicTime() - transition_start_ms;
+    const frac: f64 = @min(1.0, @as(f64, @floatFromInt(elapsed_us)) / 250000.0);
+    // Ease-out cubic: 1 - (1-t)^3.
+    const e = 1.0 - (1.0 - frac) * (1.0 - frac) * (1.0 - frac);
+    gtk.Widget.setOpacity(detail_box_widget, e);
+    if (frac >= 1.0) {
+        transition_active = false;
+        gtk.Widget.setOpacity(detail_box_widget, 1);
+    }
+}
+
+// --- Import/export status ---
+
+var url_entry: *gtk.Entry = undefined;
+var import_spinner_box: *gtk.Widget = undefined;
+var import_status: *gtk.Label = undefined;
+
+fn set_import_status(msg: [:0]const u8, is_error: bool) void {
+    if (is_error) {
+        // Red markup; the text is escaped first so a
+        // file path cannot inject markup.
+        const e = glib.markupEscapeText(msg.ptr, -1);
+        const text = fmtZ(std.heap.page_allocator, "<span foreground='red'>{s}</span>", .{std.mem.span(e)});
+        gtk.Label.setMarkup(import_status, text);
+        g_free(e);
+    } else {
+        gtk.Label.setText(import_status, msg);
+    }
+}
+
+fn set_import_running(running: bool) void {
+    gtk.Widget.setVisible(import_spinner_box, if (running) 1 else 0);
+}
+
+fn start_url_import() void {
+    if (json_import.isImporting()) return;
+    json_import.startImport(entryText(url_entry));
+    set_import_running(true);
+    set_import_status("", false);
+}
+
+fn poll_import() void {
+    if (!json_import.isImporting()) return;
+    const outcome = json_import.pollImport() orelse return;
+    set_import_running(false);
+    switch (outcome) {
+        .imported => |imp| {
+            // pollImport already inserted and reloaded.
+            rebuild_list();
+            for (filtered.items, 0..) |idx, p| {
+                if (db.recipes[idx].id == imp.first_id) {
+                    if (gtk.ListBox.getRowAtIndex(main_list_box, @intCast(p))) |row| {
+                        gtk.ListBox.selectRow(main_list_box, row);
+                    }
+                    break;
+                }
+            }
+            const msg = if (imp.count == 1)
+                fmtZ(std.heap.page_allocator, "Imported 1 recipe.", .{})
+            else
+                fmtZ(std.heap.page_allocator, "Imported {d} recipes.", .{imp.count});
+            set_import_status(msg, false);
+        },
+        .failed => |msg| {
+            set_import_status(fmtZ(std.heap.page_allocator, "{s}", .{msg}), true);
+        },
+    }
+}
+
+// Persistent 16ms tick: detail fade, image-job poll,
+// import poll. Always returns true (keep running).
+fn tick_cb(_: ?*anyopaque) callconv(.c) c_int {
+    step_transition();
+    poll_image_jobs();
+    poll_import();
+    return 1;
 }
 
 fn on_search_changed(_: *gtk.SearchEntry, _: *gtk.Window) callconv(.c) void {
@@ -185,6 +401,13 @@ fn on_row_selected(_: *gtk.ListBox, row: ?*gtk.ListBoxRow, detail: *Detail) call
 fn detail_label() *gtk.Label {
     const label = gtk.Label.new("");
     gtk.Label.setXalign(label, 0);
+    // Detail text is selectable, so it can be highlighted
+    // and copied like a browser <p> element; row labels
+    // deliberately stay unselectable (a selectable label
+    // inside a listbox row captures the click for cursor
+    // placement instead of selecting the recipe, the same
+    // trade-off as cpp-gtk4).
+    gtk.Label.setSelectable(label, 1);
     return label;
 }
 
@@ -234,6 +457,11 @@ const Form = struct {
     description: *gtk.Entry,
     servings: *gtk.SpinButton,
     notes: *gtk.Entry,
+    // Image chosen via "Choose image…", copied into
+    // images/ at choose time (like odin-gtk); saved with
+    // the recipe. Empty means no image.
+    image_path: [:0]const u8 = "",
+    image_label: *gtk.Label,
     error_label: *gtk.Label,
     ing_box: *gtk.Box,
     step_box: *gtk.Box,
@@ -246,6 +474,13 @@ const Form = struct {
 // entry's own buffer, so it is only valid while the entry
 // lives — fine here, since saving binds (SQLITE_STATIC)
 // and steps before the form closes.
+/// Basename of a sentinel path, still sentinel (the
+/// suffix runs to the path's NUL terminator).
+fn basenameZ(path: [:0]const u8) [:0]const u8 {
+    const idx = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    return path[idx + 1 ..];
+}
+
 fn entryText(entry: *gtk.Entry) [:0]const u8 {
     return std.mem.span(gtk.Editable.getText(entry.as(gtk.Editable)));
 }
@@ -260,32 +495,47 @@ fn add_list_row(list_box: *gtk.ListBox, title: [:0]const u8) void {
     gtk.ListBox.append(list_box, row_label.as(gtk.Widget));
 }
 
-// title_matches_search is the list filter, mirroring
-// cpp-gtk4's search.h: case-insensitive substring match
-// on the recipe TITLE only; an empty query matches
-// everything; the query is NOT trimmed.
-fn title_matches_search(title: [:0]const u8, query: [:0]const u8) bool {
-    if (query.len == 0) return true;
-    if (query.len > title.len) return false;
-    var i: usize = 0;
-    while (i + query.len <= title.len) : (i += 1) {
-        var ok = true;
-        for (query, 0..) |qc, j| {
-            if (std.ascii.toLower(title[i + j]) != std.ascii.toLower(qc)) {
-                ok = false;
-                break;
-            }
-        }
-        if (ok) return true;
+// rebuild_list builds one row box per filtered recipe:
+// a 32x32 image slot (picture, spinner, or placeholder,
+// exactly one visible) plus the title label. Row labels
+// stay unselectable so clicks select the recipe.
+fn add_image_row(list_box: *gtk.ListBox, recipe: db.Recipe) void {
+    var row_box = gtk.Box.new(gtk.Orientation.horizontal, 6);
+    var slot = gtk.Box.new(gtk.Orientation.horizontal, 0);
+    gtk.Widget.setSizeRequest(slot.as(gtk.Widget), 32, 32);
+    var picture = gtk.Picture.new();
+    gtk.Picture.setContentFit(picture, .scale_down);
+    gtk.Widget.setSizeRequest(picture.as(gtk.Widget), 32, 32);
+    var spinner = gtk.Spinner.new();
+    var placeholder = gtk.Label.new("");
+    gtk.Widget.setSizeRequest(placeholder.as(gtk.Widget), 32, 32);
+    gtk.Box.append(slot, picture.as(gtk.Widget));
+    gtk.Box.append(slot, spinner.as(gtk.Widget));
+    gtk.Box.append(slot, placeholder.as(gtk.Widget));
+    gtk.Widget.setVisible(picture.as(gtk.Widget), 0);
+    gtk.Widget.setVisible(spinner.as(gtk.Widget), 0);
+    gtk.Widget.setVisible(placeholder.as(gtk.Widget), 1);
+    gtk.Box.append(row_box, slot.as(gtk.Widget));
+    var row_label = gtk.Label.new(recipe.title);
+    gtk.Label.setXalign(row_label, 0);
+    gtk.Box.append(row_box, row_label.as(gtk.Widget));
+    gtk.ListBox.append(list_box, row_box.as(gtk.Widget));
+    if (recipe.image_path.len > 0) {
+        image_row_refs.append(std.heap.page_allocator, .{
+            .path = recipe.image_path,
+            .picture = picture,
+            .spinner = spinner,
+            .placeholder = placeholder.as(gtk.Widget),
+        }) catch {};
     }
-    return false;
 }
+
 
 fn apply_filter() void {
     filtered.clearRetainingCapacity();
     const query = std.mem.span(gtk.Editable.getText(search_entry.as(gtk.Editable)));
     for (db.recipes, 0..) |recipe, i| {
-        if (title_matches_search(recipe.title, query)) {
+        if (search.titleMatchesSearch(recipe.title, query)) {
             filtered.append(std.heap.page_allocator, i) catch @panic("oom");
         }
     }
@@ -294,9 +544,11 @@ fn apply_filter() void {
 fn rebuild_list() void {
     apply_filter();
     gtk.ListBox.removeAll(main_list_box);
+    image_row_refs.clearRetainingCapacity();
     for (filtered.items) |idx| {
-        add_list_row(main_list_box, db.recipes[idx].title);
+        add_image_row(main_list_box, db.recipes[idx]);
     }
+    start_image_loads();
 }
 
 fn add_ingredient_row(form: *Form) void {
@@ -394,6 +646,7 @@ fn on_add_save(_: *gtk.Button, form: *Form) callconv(.c) void {
         .title = title,
         .description = entryText(form.description),
         .servings = @intCast(gtk.SpinButton.getValueAsInt(form.servings)),
+        .image_path = form.image_path,
         .ingredients = ingredients.items,
         .steps = steps.items,
         .notes = entryText(form.notes),
@@ -521,6 +774,21 @@ fn openForm(parent: *gtk.Window, prefill: ?db.Recipe, edit_id: i64) void {
     form.notes = gtk.Entry.new();
     if (prefill) |r| gtk.Editable.setText(form.notes.as(gtk.Editable), r.notes);
     gtk.Box.append(form_box, form.notes.as(gtk.Widget));
+    var choose_image = gtk.Button.newWithLabel("Choose image…");
+    _ = gtk.Button.signals.clicked.connect(choose_image, *Form, &on_choose_image, form, .{});
+    gtk.Box.append(form_box, choose_image.as(gtk.Widget));
+    form.image_label = detail_label();
+    if (prefill) |r| {
+        form.image_path = r.image_path;
+        if (r.image_path.len == 0) {
+            gtk.Label.setText(form.image_label, "No image");
+        } else {
+            gtk.Label.setText(form.image_label, basenameZ(r.image_path));
+        }
+    } else {
+        gtk.Label.setText(form.image_label, "No image");
+    }
+    gtk.Box.append(form_box, form.image_label.as(gtk.Widget));
     form.error_label = detail_label();
     gtk.Box.append(form_box, form.error_label.as(gtk.Widget));
 
@@ -631,8 +899,174 @@ fn on_delete_cancel(_: *gtk.Button, window: *gtk.Window) callconv(.c) void {
 }
 
 
+
+// --- File dialogs ---
+//
+// One dialog at a time (they are modal), so the purpose
+// lives in a package var the async callback reads.
+
+const DialogPurpose = enum { none, choose_image, import_file, export_single, export_all };
+
+var dialog_purpose: DialogPurpose = .none;
+var dialog_dialog: *gtk.FileDialog = undefined;
+
+var main_io_threaded: ?std.Io.Threaded = null;
+
+fn getMainIo() std.Io {
+    if (main_io_threaded == null) {
+        main_io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    }
+    return main_io_threaded.?.io();
+}
+
+fn open_file_dialog(purpose: DialogPurpose) void {
+    dialog_purpose = purpose;
+    const dialog = gtk.FileDialog.new();
+    dialog_dialog = dialog;
+    gtk.FileDialog.setModal(dialog, 1);
+    switch (purpose) {
+        .choose_image => gtk.FileDialog.setTitle(dialog, "Choose image"),
+        .import_file => gtk.FileDialog.setTitle(dialog, "Import recipe JSON"),
+        .export_single => {
+            gtk.FileDialog.setTitle(dialog, "Export recipe");
+            var initial: [:0]const u8 = "recipes.json";
+            if (selected_id >= 0) {
+                for (db.recipes) |r| {
+                    if (r.id == selected_id) {
+                        const name = json_export.defaultFileName(std.heap.page_allocator, r.title) catch "recipe.json";
+                        initial = std.fmt.allocPrintSentinel(std.heap.page_allocator, "{s}", .{name}, 0) catch "recipe.json";
+                        break;
+                    }
+                }
+            }
+            gtk.FileDialog.setInitialName(dialog, initial);
+        },
+        .export_all => {
+            gtk.FileDialog.setTitle(dialog, "Export all recipes");
+            gtk.FileDialog.setInitialName(dialog, "recipes.json");
+        },
+        .none => {},
+    }
+    if (purpose == .export_single or purpose == .export_all) {
+        gtk.FileDialog.save(dialog, main_window, null, &on_dialog_done, null);
+    } else {
+        gtk.FileDialog.open(dialog, main_window, null, &on_dialog_done, null);
+    }
+}
+
+fn on_choose_image(_: *gtk.Button, form: *Form) callconv(.c) void {
+    _ = form;
+    open_file_dialog(.choose_image);
+}
+
+fn on_import_url(_: *gtk.Button, _: *gtk.Window) callconv(.c) void {
+    start_url_import();
+}
+
+fn on_import_file(_: *gtk.Button, _: *gtk.Window) callconv(.c) void {
+    open_file_dialog(.import_file);
+}
+
+fn on_export_single(_: *gtk.Button, _: *gtk.Window) callconv(.c) void {
+    if (selected_id < 0) return;
+    open_file_dialog(.export_single);
+}
+
+fn on_export_all(_: *gtk.Button, _: *gtk.Window) callconv(.c) void {
+    open_file_dialog(.export_all);
+}
+
+fn on_dialog_done(_: ?*gobject.Object, res: *gio.AsyncResult, _: ?*anyopaque) callconv(.c) void {
+    const purpose = dialog_purpose;
+    dialog_purpose = .none;
+    var err: ?*glib.Error = null;
+    switch (purpose) {
+        .choose_image, .import_file => {
+            const file = gtk.FileDialog.openFinish(dialog_dialog, res, &err) orelse {
+                // A cancelled dialog is silent; a real
+                // error surfaces as a status line.
+                if (err) |e| {
+                    // GtkFileDialog reports Cancel/close
+                    // as GTK_DIALOG_ERROR_DISMISSED (code
+                    // 2), not G_IO_ERROR_CANCELLED: a
+                    // dismissed dialog is silent.
+                    if (e.f_domain == gtk.DialogError.quark() and
+                        (e.f_code == @intFromEnum(gtk.DialogError.dismissed) or
+                            e.f_code == @intFromEnum(gtk.DialogError.cancelled))) return;
+                    if (e.f_code == @intFromEnum(gio.IOErrorEnum.cancelled)) return;
+                    const detail = if (e.f_message) |m| std.mem.span(m) else "unknown error";
+                    set_import_status(fmtZ(std.heap.page_allocator, "Could not open file: {s} (code {d}).", .{ detail, e.f_code }), true);
+                }
+                return;
+            };
+            const path = gio.File.getPath(file) orelse return;
+            const path_slice = std.mem.span(path);
+            if (purpose == .import_file) {
+                if (json_import.isImporting()) return;
+                json_import.startFileImport(path_slice);
+                set_import_running(true);
+                set_import_status("", false);
+            } else {
+                const form = active_form orelse return;
+                const copied = image_files.copyImageFile(path_slice, "images") catch {
+                    gtk.Label.setText(form.error_label, "Could not copy image file.");
+                    return;
+                };
+                form.image_path = std.fmt.allocPrintSentinel(form.arena.allocator(), "{s}", .{copied}, 0) catch "";
+                gtk.Label.setText(form.image_label, basenameZ(form.image_path));
+            }
+        },
+        .export_single, .export_all => {
+            const file = gtk.FileDialog.saveFinish(dialog_dialog, res, &err) orelse {
+                if (err) |e| {
+                    if (e.f_domain == gtk.DialogError.quark() and
+                        (e.f_code == @intFromEnum(gtk.DialogError.dismissed) or
+                            e.f_code == @intFromEnum(gtk.DialogError.cancelled))) return;
+                    if (e.f_code == @intFromEnum(gio.IOErrorEnum.cancelled)) return;
+                    const detail = if (e.f_message) |m| std.mem.span(m) else "unknown error";
+                    set_import_status(fmtZ(std.heap.page_allocator, "Could not save file: {s} (code {d}).", .{ detail, e.f_code }), true);
+                }
+                return;
+            };
+            const path = gio.File.getPath(file) orelse return;
+            const path_slice = std.mem.span(path);
+            const io = getMainIo();
+            if (purpose == .export_single) {
+                for (db.recipes) |r| {
+                    if (r.id != selected_id) continue;
+                    const text = json_export.exportSingle(std.heap.page_allocator, r) catch {
+                        set_import_status("Could not write export file.", true);
+                        return;
+                    };
+                    json_export.writeExport(io, path_slice, text) catch |e| {
+                        const msg = json_export.formatWriteError(std.heap.page_allocator, path_slice, e) catch "Could not write export file.";
+                        set_import_status(fmtZ(std.heap.page_allocator, "{s}", .{msg}), true);
+                        return;
+                    };
+                    set_import_status(fmtZ(std.heap.page_allocator, "Exported 1 recipe to {s}.", .{path_slice}), false);
+                    return;
+                }
+            } else {
+                const text = json_export.exportCollection(std.heap.page_allocator, db.recipes) catch {
+                    set_import_status("Could not write export file.", true);
+                    return;
+                };
+                json_export.writeExport(io, path_slice, text) catch |e| {
+                    const msg = json_export.formatWriteError(std.heap.page_allocator, path_slice, e) catch "Could not write export file.";
+                    set_import_status(fmtZ(std.heap.page_allocator, "{s}", .{msg}), true);
+                    return;
+                };
+                set_import_status(fmtZ(std.heap.page_allocator, "Exported {d} recipes to {s}.", .{ db.recipes.len, path_slice }), false);
+            }
+        },
+        .none => {},
+    }
+}
+
+
 fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     var window = gtk.ApplicationWindow.new(app);
+    main_window = window.as(gtk.Window);
     gtk.Window.setTitle(window.as(gtk.Window), "Recipe Manager");
     gtk.Window.setDefaultSize(window.as(gtk.Window), 900, 600);
 
@@ -645,12 +1079,33 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     var list_scrolled = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(list_scrolled, list_box.as(gtk.Widget));
     gtk.Widget.setSizeRequest(list_scrolled.as(gtk.Widget), 250, -1);
+    // The list takes the leftover left-pane height now
+    // that the import/export controls sit below it;
+    // without this it collapses to one row.
+    gtk.Widget.setVexpand(list_scrolled.as(gtk.Widget), 1);
 
     var detail = std.heap.page_allocator.create(Detail) catch @panic("oom");
     detail_ptr = detail;
     detail.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
     var detail_box = gtk.Box.new(gtk.Orientation.vertical, 6);
+    detail_box_widget = detail_box.as(gtk.Widget);
+    detail.image_picture = gtk.Picture.new();
+    gtk.Picture.setContentFit(detail.image_picture, .scale_down);
+    gtk.Box.append(detail_box, detail.image_picture.as(gtk.Widget));
+    var image_spinner = gtk.Spinner.new();
+    var image_spinner_label = gtk.Label.new("Loading image…");
+    gtk.Label.setXalign(image_spinner_label, 0);
+    var image_spinner_box = gtk.Box.new(gtk.Orientation.horizontal, 6);
+    gtk.Box.append(image_spinner_box, image_spinner.as(gtk.Widget));
+    gtk.Box.append(image_spinner_box, image_spinner_label.as(gtk.Widget));
+    detail.image_spinner_box = image_spinner_box.as(gtk.Widget);
+    gtk.Box.append(detail_box, detail.image_spinner_box);
+    detail.image_status = detail_label();
+    gtk.Box.append(detail_box, detail.image_status.as(gtk.Widget));
+    gtk.Widget.setVisible(detail.image_picture.as(gtk.Widget), 0);
+    gtk.Widget.setVisible(detail.image_spinner_box, 0);
+    gtk.Widget.setVisible(detail.image_status.as(gtk.Widget), 0);
     detail.title = detail_label();
     gtk.Box.append(detail_box, detail.title.as(gtk.Widget));
     detail.description = detail_label();
@@ -685,10 +1140,39 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
 
     var add_button = gtk.Button.newWithLabel("Add recipe");
     _ = gtk.Button.signals.clicked.connect(add_button, *gtk.Window, &on_add_clicked, window.as(gtk.Window), .{});
+    url_entry = gtk.Entry.new();
+    gtk.Editable.setText(url_entry.as(gtk.Editable), "http://localhost:8000/recipes.json");
+    var import_url_button = gtk.Button.newWithLabel("Import from URL");
+    _ = gtk.Button.signals.clicked.connect(import_url_button, *gtk.Window, &on_import_url, window.as(gtk.Window), .{});
+    var import_file_button = gtk.Button.newWithLabel("Import from file…");
+    _ = gtk.Button.signals.clicked.connect(import_file_button, *gtk.Window, &on_import_file, window.as(gtk.Window), .{});
+    var export_single_button = gtk.Button.newWithLabel("Export recipe…");
+    _ = gtk.Button.signals.clicked.connect(export_single_button, *gtk.Window, &on_export_single, window.as(gtk.Window), .{});
+    var export_all_button = gtk.Button.newWithLabel("Export all…");
+    _ = gtk.Button.signals.clicked.connect(export_all_button, *gtk.Window, &on_export_all, window.as(gtk.Window), .{});
+    var export_row = gtk.Box.new(gtk.Orientation.horizontal, 6);
+    gtk.Box.append(export_row, export_single_button.as(gtk.Widget));
+    gtk.Box.append(export_row, export_all_button.as(gtk.Widget));
+    var import_spinner = gtk.Spinner.new();
+    var import_spinner_label = gtk.Label.new("Importing…");
+    gtk.Label.setXalign(import_spinner_label, 0);
+    var import_spinner_box_widget = gtk.Box.new(gtk.Orientation.horizontal, 6);
+    gtk.Box.append(import_spinner_box_widget, import_spinner.as(gtk.Widget));
+    gtk.Box.append(import_spinner_box_widget, import_spinner_label.as(gtk.Widget));
+    import_spinner_box = import_spinner_box_widget.as(gtk.Widget);
+    import_status = detail_label();
+    gtk.Label.setWrap(import_status, 1);
     var left_box = gtk.Box.new(gtk.Orientation.vertical, 6);
     gtk.Box.append(left_box, search_entry.as(gtk.Widget));
     gtk.Box.append(left_box, add_button.as(gtk.Widget));
     gtk.Box.append(left_box, list_scrolled.as(gtk.Widget));
+    gtk.Box.append(left_box, url_entry.as(gtk.Widget));
+    gtk.Box.append(left_box, import_url_button.as(gtk.Widget));
+    gtk.Box.append(left_box, import_file_button.as(gtk.Widget));
+    gtk.Box.append(left_box, export_row.as(gtk.Widget));
+    gtk.Box.append(left_box, import_spinner_box);
+    gtk.Box.append(left_box, import_status.as(gtk.Widget));
+    gtk.Widget.setVisible(import_spinner_box, 0);
 
     var root = gtk.Box.new(gtk.Orientation.horizontal, 0);
     gtk.Box.append(root, left_box.as(gtk.Widget));
@@ -705,6 +1189,8 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         }
     }
 
+    _ = glib.timeoutAdd(16, &tick_cb, null);
+
     gtk.Widget.show(window.as(gtk.Widget));
 }
 
@@ -715,7 +1201,9 @@ fn detail_label_heading(text: [:0]const u8) *gtk.Widget {
 }
 
 pub fn main(init: std.process.Init) void {
-    db.ensureLoaded(&seed_recipes);
+    image_pixbufs = std.StringHashMap(*gdkpixbuf.Pixbuf).init(std.heap.page_allocator);
+    image_failed = std.StringHashMap(void).init(std.heap.page_allocator);
+    db.ensureLoaded(&recipes.seed_recipes);
 
     var app = gtk.Application.new("org.desktop-app-exploration.zig-gobject", .{});
     defer app.unref();

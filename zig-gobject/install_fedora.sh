@@ -69,14 +69,18 @@ ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
 # sqlite-devel is what src/db.zig links against: Zig ships no
 # SQLite package, so db.zig declares the system SQLite C API
 # by hand and links the system library (see the SQLite
-# section in README.md).
+# section in README.md). libicu-devel is what the
+# text-encoding import links against: src/json_import.zig
+# uses ICU via a build-time translate-c of src/icu.h, and
+# links icuuc and icui18n.
 $SUDO timeout 600 dnf install -y \
     curl \
     xz \
     git \
     gtk4-devel \
     libxslt \
-    sqlite-devel
+    sqlite-devel \
+    libicu-devel
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

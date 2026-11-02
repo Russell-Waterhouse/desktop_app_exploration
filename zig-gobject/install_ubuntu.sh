@@ -83,13 +83,17 @@ done
 # src/db.zig links against: Zig ships no SQLite package, so
 # db.zig declares the system SQLite C API by hand and links
 # the system library (see the SQLite section in README.md).
+# libicu-dev is what the text-encoding import links against:
+# src/json_import.zig uses ICU via a build-time translate-c
+# of src/icu.h, and links icuuc and icui18n.
 $SUDO timeout 600 apt-get install -y \
     curl \
     xz-utils \
     git \
     libgtk-4-dev \
     xsltproc \
-    libsqlite3-dev
+    libsqlite3-dev \
+    libicu-dev
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

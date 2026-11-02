@@ -75,7 +75,7 @@ from recipes.db in the current working directory, seeded on
 first run with the same 3 recipes (src/db.zig declares the
 system SQLite C API by hand, as Zig ships no SQLite package
 and Zig 0.17 removed @cImport; the seed data lives in
-src/main.zig and is passed to db.ensureLoaded()). The
+src/recipes.zig and is passed to db.ensureLoaded()). The
 database file is git-ignored, not pushed.
 Add recipe: done — an "Add recipe" button opens a modal
 form window (title required, servings spin button, dynamic
@@ -97,10 +97,64 @@ substring, empty query shows all, query not trimmed);
 the list holds indices into the recipe array so row
 selection, add/edit/delete reselection, and the empty
 result (cleared detail) all follow the filter.
+Display images: done — list rows show 32x32 thumbnails and
+the detail pane shows the photo at its decoded size (at most
+400x300, never scaled up: GtkPicture content-fit SCALE_DOWN);
+decoding happens on a worker thread via
+gdkpixbuf.Pixbuf.newFromFile plus scaleSimple, rows show a
+spinner while loading, and a failed load shows a status line
+and is not retried.
+Import image from file: done — the add/edit form has a
+"Choose image…" button (GtkFileDialog); choosing copies the
+file into images/ (collision suffix _1, _2 before the
+extension) and stores the relative path.
+Display animations: done — the detail pane fades in (opacity
+0 to 1 over 0.25s, ease-out cubic, driven by a 16ms glib
+timeout) on selection change; image loading shows a spinner
+in the detail pane and in list rows while the worker decodes.
+The fade itself is implemented, not screenshot-verified: it
+is too fast for screenshot roundtrips.
+Network JSON import: done — a URL entry (default
+http://localhost:8000/recipes.json) and an "Import from URL"
+button fetch on a worker thread, with a spinner and a status
+line; the app stays responsive, and success reloads from the
+database and selects the first imported recipe. Same shapes
+as the other stacks: bare object, {"recipes": [...]}, and
+array. Caveat, same as zig-dvui: the HTTP client is raw
+Linux syscalls, because std.Io.net reads hang on worker
+threads — so this is Linux-only (documented in
+src/json_import.zig).
+Raw-file import: done — "Import from file…" opens a
+GtkFileDialog; single and collection shapes; errors surface
+as a red status line. A dismissed dialog (Cancel, window
+close, Escape) is silent: GtkFileDialog reports that as
+GTK_DIALOG_ERROR_DISMISSED, not G_IO_ERROR_CANCELLED.
+Raw-file export: done — "Export recipe…" (initial name
+<title>.json, bare object) and "Export all…" (initial name
+recipes.json, {"recipes": [...]}) open save dialogs.
+Text-encoding import: done — BOM sniff, then ICU detection
+(ucsdet) and strict conversion (ucnv with the STOP
+callback), for both file and URL imports; decode errors are
+import errors, never substituted text. The ICU API comes
+from a build-time translate-c of src/icu.h (see the ICU
+section below); libicu-dev / libicu-devel were added to the
+install scripts.
+Complex text: done — the four probe recipes (Arabic,
+Devanagari, Simplified Chinese, emoji) are seed data and
+render correctly via Pango with zero font configuration;
+detail labels are selectable, so drag-select and Ctrl+C copy
+work (verified by pasting a selection into the search entry);
+list-row titles stay unselectable so row clicks select the
+recipe, the same trade-off as cpp-gtk4.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.
 
 ## Tests
 
-None yet.
+`zig build test` — 63 tests, all passing: seed counts
+(7 recipes / 27 ingredients / 21 steps), search, database
+seed/insert/update/delete round-trip, image copy/collision,
+JSON import (including the encoding fixtures and a one-shot
+local server; the URL tests need the test-data server on
+localhost:8000), and JSON export.
