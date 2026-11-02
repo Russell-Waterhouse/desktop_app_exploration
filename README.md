@@ -20,10 +20,6 @@ This repo is for choosing a desktop application development stack. See `plan.md`
   - GTK4 via odin-gtk bindings — new candidate (Nov 2026): hello world window and install scripts done, the rest of the test app not yet built. PucklaJ/odin-gtk provides generated Odin bindings to GTK4 and libadwaita, including pango and cairo, so this route stands on the same Pango text stack as cpp-gtk4.
 - Zig:
   - GTK4 via zig-gobject bindings — new candidate (Nov 2026): hello world window and install scripts done, the rest of the test app not yet built. ianprime0509/zig-gobject provides GObject-introspection-generated Zig bindings to GTK4 and libadwaita, so this route stands on the same Pango text stack as cpp-gtk4.
-- Backends underneath, not counted as UI frameworks:
-  - SDL
-  - Sokol
-  - Raylib
 
 ## Frameworks no longer under consideration
 
