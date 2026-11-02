@@ -1,9 +1,11 @@
 package main
 
-// Recipe list and detail view, hard-coded data: the same 3
-// recipes the other stacks start with (Banana Bread, Tomato
-// Basil Pasta, Chicken Stir Fry). The list is a GtkListBox;
-// selecting a row fills the detail pane on the right.
+// Recipe list and detail view, backed by SQLite: recipes
+// are loaded from recipes.db (seeded on first run with the
+// same 3 recipes the other stacks start with). The list is
+// a GtkListBox; selecting a row fills the detail pane on
+// the right. See db.odin (SQLite layer) and recipes.odin
+// (seed data).
 // The bindings are fetched by install_ubuntu.sh /
 // install_fedora.sh into third_party/odin-gtk (pinned to tag
 // 4.17.2) and imported by relative path, the way the
@@ -17,82 +19,12 @@ import gio "../third_party/odin-gtk/glib/gio"
 import gobj "../third_party/odin-gtk/glib/gobject"
 import gtk "../third_party/odin-gtk/gtk"
 
-Ingredient :: struct {
-	quantity, unit, name: string,
-}
-
-Recipe :: struct {
-	title, description: string,
-	servings:    int,
-	ingredients: []Ingredient,
-	steps:       []string,
-	notes:       string,
-}
-
-RECIPES := []Recipe{
-	{
-		"Banana Bread",
-		"A classic loaf, best with very ripe bananas.",
-		8,
-		[]Ingredient{
-			{"3", "", "ripe bananas, mashed"},
-			{"1/2", "cup", "butter, melted"},
-			{"3/4", "cup", "sugar"},
-			{"1", "", "egg"},
-			{"1", "tsp", "vanilla"},
-			{"1", "tsp", "baking soda"},
-			{"1 1/2", "cups", "flour"},
-		},
-		[]string{
-			"Preheat the oven to 350°F and grease a 9x5 loaf pan.",
-			"Mash the bananas, then stir in the melted butter, sugar, egg, and vanilla.",
-			"Stir in the baking soda and flour until just combined.",
-			"Pour into the pan and bake for 55-65 minutes, until a toothpick comes out clean.",
-			"Cool in the pan for 10 minutes, then turn out onto a rack.",
-		},
-		"Optional: fold in walnuts or chocolate chips before baking.",
-	},
-	{
-		"Tomato Basil Pasta",
-		"A quick weeknight pasta with fresh tomatoes and basil.",
-		4,
-		[]Ingredient{
-			{"12", "oz", "pasta"},
-			{"2", "lbs", "tomatoes, chopped"},
-			{"3", "cloves", "garlic, sliced"},
-			{"1/4", "cup", "olive oil"},
-			{"1", "cup", "basil leaves"},
-			{"1/2", "cup", "parmesan, grated"},
-		},
-		[]string{
-			"Cook the pasta in salted water until al dente, reserving a cup of pasta water.",
-			"Meanwhile, warm the olive oil and garlic until fragrant, about 2 minutes.",
-			"Add the tomatoes and cook until they soften, about 8 minutes.",
-			"Toss the pasta with the sauce, basil, and parmesan, adding pasta water as needed.",
-		},
-		"Serve immediately, with extra parmesan on top.",
-	},
-	{
-		"Chicken Stir Fry",
-		"Chicken and vegetables in a simple soy-ginger sauce, served with rice.",
-		4,
-		[]Ingredient{
-			{"1 1/2", "lbs", "chicken breast, sliced"},
-			{"2", "", "bell peppers, sliced"},
-			{"2", "cups", "broccoli florets"},
-			{"3", "tbsp", "soy sauce"},
-			{"1", "tbsp", "ginger, grated"},
-			{"2", "cloves", "garlic, minced"},
-		},
-		[]string{
-			"Sear the chicken in a hot, oiled pan until cooked through, then set aside.",
-			"Stir fry the peppers and broccoli until just tender, about 4 minutes.",
-			"Return the chicken to the pan with the soy sauce, ginger, and garlic.",
-			"Cook for 2 more minutes, stirring, until the sauce coats everything.",
-		},
-		"Serve over rice.",
-	},
-}
+// Recipes loaded from recipes.db, and a database error to
+// show instead, set by main() before the app runs. The list
+// and detail code reads these; on a database failure the
+// list stays empty and the detail title shows the error.
+recipes: []Recipe
+db_error_msg: string
 
 // Detail holds the widgets the row-selected handler updates.
 // Label widgets are stored as ^Widget (what label_new
@@ -143,9 +75,9 @@ show_recipe :: proc(d: ^Detail, r: Recipe) {
 			ing := r.ingredients[i]
 			line: string
 			if ing.unit == "" {
-				line = fmt.tprintf("%s %s", ing.quantity, ing.name)
+				line = fmt.tprintf("%s %s", ing.amount, ing.name)
 			} else {
-				line = fmt.tprintf("%s %s %s", ing.quantity, ing.unit, ing.name)
+				line = fmt.tprintf("%s %s %s", ing.amount, ing.unit, ing.name)
 			}
 			set_text(label, line)
 			gtk.widget_set_visible(label, true)
@@ -173,10 +105,10 @@ on_row_selected :: proc "c" (box: ^gtk.ListBox, row: ^gtk.ListBoxRow, data: rawp
 		return
 	}
 	index := gtk.list_box_row_get_index(row)
-	if index < 0 || int(index) >= len(RECIPES) {
+	if index < 0 || int(index) >= len(recipes) {
 		return
 	}
-	show_recipe(cast(^Detail)data, RECIPES[index])
+	show_recipe(cast(^Detail)data, recipes[index])
 }
 
 activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
@@ -190,7 +122,7 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	gtk.window_set_default_size(window, 900, 600)
 
 	list_box := cast(^gtk.ListBox)gtk.list_box_new()
-	for r in RECIPES {
+	for r in recipes {
 		gtk.list_box_append(list_box, new_label(r.title))
 	}
 	list_scrolled := gtk.scrolled_window_new()
@@ -246,16 +178,35 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 		cast(gobj.Callback)on_row_selected,
 		d,
 	)
-	show_recipe(d, RECIPES[0])
-	gtk.list_box_select_row(
-		list_box,
-		gtk.list_box_get_row_at_index(list_box, 0),
-	)
+	if db_error_msg != "" {
+		set_text(d.title, db_error_msg)
+	} else if len(recipes) > 0 {
+		show_recipe(d, recipes[0])
+		gtk.list_box_select_row(
+			list_box,
+			gtk.list_box_get_row_at_index(list_box, 0),
+		)
+	}
 
 	gtk.window_present(window)
 }
 
 main :: proc() {
+	db, db_open_err := open_database("recipes.db")
+	defer close_database(db)
+	if db_open_err != "" {
+		db_error_msg = db_open_err
+	} else if err := ensure_schema_and_seed(db, RECIPES[:]); err != "" {
+		db_error_msg = err
+	} else {
+		loaded, load_err := load_recipes(db)
+		if load_err != "" {
+			db_error_msg = load_err
+		} else {
+			recipes = loaded
+		}
+	}
+
 	app := gtk.application_new(
 		"org.desktop-app-exploration.odin-gtk",
 		.APPLICATION_DEFAULT_FLAGS,

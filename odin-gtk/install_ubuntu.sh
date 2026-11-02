@@ -86,12 +86,17 @@ done
 # git fetches the odin-gtk bindings, and libgtk-4-dev is what the
 # bindings link against on Linux (see the header comment: the
 # bindings default to dynamic linking against the system libs).
+# libsqlite3-dev is what src/db.odin links against: Odin ships
+# no SQLite package, so db.odin declares the system SQLite C
+# API and links the system library (see the SQLite section in
+# README.md).
 $SUDO timeout 600 apt-get install -y \
     clang \
     curl \
     git \
     unzip \
-    libgtk-4-dev
+    libgtk-4-dev \
+    libsqlite3-dev
 
 # Fetch the bindings, pinned to the tag above. Kept out of the
 # repo itself: the bindings are a large generated tree owned by

@@ -105,6 +105,13 @@ g++ -std=c++17 -Wall -Wextra -pthread test_json_import.cpp json_import.cpp -o /t
 
 ## Stack-specific wrinkles
 
+- List row labels are deliberately NOT selectable, unlike
+  every other label in the app (detail labels are
+  selectable, so displayed text can still be highlighted to
+  copy): a selectable label inside a listbox row captures
+  the click to place a text cursor, so the row never gets
+  selected and the recipe never opens. The same title stays
+  selectable in the detail pane.
 - Images decode on a `GThread` (GdkPixbuf loading only — no GTK
   calls off the main thread) and hand the decoded pixbuf to the
   main thread through an idle callback, which creates the

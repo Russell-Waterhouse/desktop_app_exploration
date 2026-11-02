@@ -332,7 +332,11 @@ void rebuild_list(App* app) {
         }
         GtkWidget* label = gtk_label_new(recipe.title.c_str());
         gtk_label_set_xalign(GTK_LABEL(label), 0.0);
-        gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+        // Deliberately NOT selectable, unlike every other label
+        // in this app: a selectable label inside a listbox row
+        // captures the click to place a text cursor, so the row
+        // never gets selected and the recipe never opens. The
+        // same title stays selectable in the detail pane.
         gtk_box_append(GTK_BOX(row_box), label);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
         gtk_list_box_append(GTK_LIST_BOX(app->list_box), row);

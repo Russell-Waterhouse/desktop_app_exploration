@@ -91,7 +91,7 @@ has been tested on Fedora yet.
 - [X] install script for Fedora
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
-- [ ] recipe view with SQLite integration
+- [X] recipe view with SQLite integration
 - [ ] add recipe
 - [ ] edit recipe
 - [ ] delete recipe
@@ -128,7 +128,7 @@ has been tested on Fedora yet.
 - [X] install script for Fedora
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
-- [ ] recipe view with SQLite integration
+- [X] recipe view with SQLite integration
 - [ ] add recipe
 - [ ] edit recipe
 - [ ] delete recipe

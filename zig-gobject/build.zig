@@ -26,5 +26,8 @@ pub fn build(b: *std.Build) !void {
         .root_module = mod,
         .use_llvm = true,
     });
+    // db.zig declares the system SQLite C API by hand and
+    // links the system library (see db.zig's header comment).
+    exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(exe);
 }

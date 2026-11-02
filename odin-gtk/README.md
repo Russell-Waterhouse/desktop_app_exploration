@@ -63,6 +63,12 @@ Stir Fry) on the left, detail pane (title, description,
 servings, ingredients, numbered steps, notes) on the right,
 confirmed by screenshot under Xvfb including a click on the
 second row switching the detail to Tomato Basil Pasta.
+Recipe view with SQLite integration: done — recipes load
+from recipes.db in the current working directory, seeded on
+first run with the same 3 recipes (src/db.odin declares the
+system SQLite C API by hand, as Odin ships no SQLite
+package; src/recipes.odin holds the seed data). The database
+file is git-ignored, not pushed.
 Upstream notes Linux and Windows support for the bindings;
 only Linux has been verified here.
 

@@ -66,12 +66,17 @@ ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
 # Gtk-4.0 GIR file the generator reads. libxslt ships the
 # xsltproc binary the generator uses to apply its GIR fixes:
 # without it codegen fails with "failed to execute xsltproc".
+# sqlite-devel is what src/db.zig links against: Zig ships no
+# SQLite package, so db.zig declares the system SQLite C API
+# by hand and links the system library (see the SQLite
+# section in README.md).
 $SUDO timeout 600 dnf install -y \
     curl \
     xz \
     git \
     gtk4-devel \
-    libxslt
+    libxslt \
+    sqlite-devel
 
 # Install Zig, unless exactly this version is already installed.
 if command -v zig >/dev/null 2>&1 && [ "$(zig version)" = "$ZIG_VERSION" ]; then

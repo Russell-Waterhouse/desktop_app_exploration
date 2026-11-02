@@ -70,6 +70,13 @@ Stir Fry) on the left, detail pane (title, description,
 servings, ingredients, numbered steps, notes) on the right,
 confirmed by screenshot under Xvfb including a click on the
 second row switching the detail to Tomato Basil Pasta.
+Recipe view with SQLite integration: done — recipes load
+from recipes.db in the current working directory, seeded on
+first run with the same 3 recipes (src/db.zig declares the
+system SQLite C API by hand, as Zig ships no SQLite package
+and Zig 0.17 removed @cImport; the seed data lives in
+src/main.zig and is passed to db.ensureLoaded()). The
+database file is git-ignored, not pushed.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.
