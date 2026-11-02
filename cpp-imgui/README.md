@@ -120,6 +120,15 @@ A fresh checkout needs only the packages
 libsdl2-dev, libgl1-mesa-dev, libsqlite3-dev); the import adds
 no dependency. `build/` is git-ignored.
 
+Complex-text display (the KB plan) adds two: FreeType
+(libfreetype-dev) for color emoji bitmaps and fontconfig
+(libfontconfig-dev) for finding the Noto fonts; both are in
+the install scripts. The shaper itself, kb_text_shape
+(v2.28g), is vendored as a single header in `third_party/`
+(zlib license), and outline glyphs use stb_truetype from the
+stb fetch already used for stb_image, so neither needs a
+system package.
+
 ## Tests
 
 Unit tests for recipe data, title search, and URL and raw-file
@@ -157,10 +166,16 @@ and click Import again. Stop the server with
 ## Notes and wrinkles
 
 - Dear ImGui's default font does not render the bullet
-  character, so ingredients use `BulletText` (which draws a
-  filled circle, not a glyph), and the search hint uses ASCII
-  "..." instead of the ellipsis character. "Loading image..."
-  likewise uses ASCII dots.
+  character, so ingredients use `Bullet` (which draws a filled
+  circle, not a glyph) followed by shaped text, and the search
+  hint uses ASCII "..." instead of the ellipsis character.
+  "Loading image..." likewise uses ASCII dots.
+- Recipe display text (list titles, detail title, description,
+  ingredients, steps, notes) is rendered shaped via
+  `shaped_text.cpp` (the KB plan), not `ImGui::Text`: plain
+  `ImGui::Text` cannot shape Arabic/Devanagari and renders
+  Chinese and emoji as '?'. Input fields keep unshaped
+  `InputText`; text input shaping is a separate todo item.
 - Dear ImGui 1.93 types `ImTextureID` as an integer, not a
   pointer, so OpenGL texture ids are converted with
   `static_cast`, not `reinterpret_cast`.

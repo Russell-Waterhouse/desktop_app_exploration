@@ -117,11 +117,10 @@ std::vector<Recipe> seed_recipes() {
         // Complex-text seed recipes (Nov 2026):
         // Arabic, Devanagari, Simplified Chinese, and emoji,
         // mirroring the rust-egui / rust-iced seed data.
-        // Note: with Dear ImGui's default font these render
-        // as ? (verified under Xvfb, Nov 2026); proper
-        // display needs merged fonts for Chinese/emoji plus
-        // text shaping for Arabic/Devanagari, which ImGui
-        // does not do on its own.
+        // Display uses shaped text (shaped_text.cpp, the KB
+        // plan): kb shapes Arabic/Devanagari, stb draws
+        // outlines, FreeType draws color emoji, so all four
+        // render correctly instead of as ?.
         {
             0,
             "كبسة الدجاج",

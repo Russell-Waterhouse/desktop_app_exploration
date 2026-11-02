@@ -32,6 +32,8 @@ find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc i18n)
+find_package(Freetype REQUIRED)
+find_package(Fontconfig REQUIRED)
 
 # SQLite3::SQLite3 was only added in CMake 4.3; older CMake
 # (including the 3.28 in this VM) only provides SQLite::SQLite3.
@@ -47,6 +49,7 @@ add_executable(cpp-imgui
     images.cpp
     json_export.cpp
     json_import.cpp
+    shaped_text.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -61,9 +64,10 @@ target_include_directories(cpp-imgui PRIVATE
     ${imgui_SOURCE_DIR}/backends
     ${imgui_SOURCE_DIR}/misc/cpp
     ${stb_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
-target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite3::SQLite3 ICU::uc ICU::i18n dl)
+target_link_libraries(cpp-imgui PRIVATE SDL2::SDL2 OpenGL::GL SQLite3::SQLite3 ICU::uc ICU::i18n Freetype::Freetype Fontconfig::Fontconfig dl)
 
 # Unit tests (plain asserts, no test framework, no new dependency
 # except ICU for the JSON import tests, which compile the
@@ -106,3 +110,10 @@ add_executable(cpp-imgui-json-export-tests tests/test_json_export.cpp json_expor
 target_include_directories(cpp-imgui-json-export-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SQLite3_INCLUDE_DIRS})
 target_link_libraries(cpp-imgui-json-export-tests PRIVATE Threads::Threads ICU::uc ICU::i18n)
 add_test(NAME cpp-imgui-json-export-tests COMMAND cpp-imgui-json-export-tests)
+
+# Shaped-text layout tests: the pure line-breaking and display
+# order logic in shaped_layout.h, no fonts, shaping, or GL, so
+# they build without SDL/Dear ImGui/FreeType/fontconfig.
+add_executable(cpp-imgui-shaped-layout-tests tests/test_shaped_layout.cpp)
+target_include_directories(cpp-imgui-shaped-layout-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME cpp-imgui-shaped-layout-tests COMMAND cpp-imgui-shaped-layout-tests)

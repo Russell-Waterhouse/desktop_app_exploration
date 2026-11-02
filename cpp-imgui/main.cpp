@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -44,6 +45,7 @@
 #include "json_export.h"
 #include "json_import.h"
 #include "search.h"
+#include "shaped_text.h"
 #include "images.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
@@ -218,6 +220,14 @@ int main(int, char**) {
     ImGui::StyleColorsDark();
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init("#version 130");
+
+    // Shaped text (KB plan): when fonts are unavailable this
+    // fails and the DrawShaped functions fall back to plain
+    // ImGui::Text, so the app still starts and works.
+    std::string shaped_error;
+    if (!InitShapedText(shaped_error)) {
+        fprintf(stderr, "%s\n", shaped_error.c_str());
+    }
 
     // Reloads recipes from the database after a save or delete.
     auto reload_recipes = [&]() {
@@ -514,11 +524,33 @@ int main(int, char**) {
             }
             if (editing) {
                 // Don't let a list click discard an in-progress edit.
-                ImGui::Text("%s", recipe.title.c_str());
-            } else if (ImGui::Selectable(recipe.title.c_str(), selected_id == recipe.id)) {
-                selected_id = recipe.id;
-                confirming_delete = false;
-                detail_error.clear();
+                DrawShapedText(recipe.title, ImGui::GetFontSize());
+            } else {
+                // Shaped title drawn over an invisible Selectable,
+                // so the row keeps its click behavior and highlight.
+                ShapedLineTexture title_tex;
+                bool clicked = false;
+                if (GetShapedLine(recipe.title, ImGui::GetFontSize(), title_tex)) {
+                    float avail = ImGui::GetContentRegionAvail().x;
+                    clicked = ImGui::Selectable(
+                        ("##recipe_" + std::to_string(recipe.id)).c_str(),
+                        selected_id == recipe.id, 0,
+                        ImVec2(avail, title_tex.height));
+                    ImVec2 min = ImGui::GetItemRectMin();
+                    ImGui::GetWindowDrawList()->AddImage(
+                        static_cast<ImTextureID>(title_tex.id), min,
+                        ImVec2(min.x + title_tex.width, min.y + title_tex.height),
+                        ImVec2(0, 0), ImVec2(1, 1),
+                        ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+                } else {
+                    clicked = ImGui::Selectable(recipe.title.c_str(),
+                                                selected_id == recipe.id);
+                }
+                if (clicked) {
+                    selected_id = recipe.id;
+                    confirming_delete = false;
+                    detail_error.clear();
+                }
             }
         }
         ImGui::EndChild();
@@ -670,8 +702,10 @@ int main(int, char**) {
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
                                      static_cast<float>(1.0 - eased) * 12.0f);
 
-                ImGui::Text("%s", recipe.title.c_str());
-                ImGui::TextWrapped("%s", recipe.description.c_str());
+                const float font_size = ImGui::GetFontSize();
+                DrawShapedText(recipe.title, font_size);
+                DrawShapedWrapped(recipe.description, font_size,
+                                  ImGui::GetContentRegionAvail().x);
                 ImGui::Text("Servings: %d", recipe.servings);
                 ImGui::Separator();
                 if (recipe.image_path.empty()) {
@@ -737,7 +771,8 @@ int main(int, char**) {
                 // rest of the detail must not be drawn this frame.
                 bool detail_gone = false;
                 if (confirming_delete) {
-                    ImGui::Text("Delete \"%s\" for good?", recipe.title.c_str());
+                    DrawShapedWrapped("Delete \"" + recipe.title + "\" for good?",
+                                      font_size, ImGui::GetContentRegionAvail().x);
                     if (ImGui::Button("Confirm delete")) {
                         std::string error;
                         if (db != nullptr && delete_recipe(db, recipe.id, error)) {
@@ -761,25 +796,27 @@ int main(int, char**) {
 
                     ImGui::Text("Ingredients");
                     for (const Ingredient& ingredient : recipe.ingredients) {
-                        if (ingredient.unit.empty()) {
-                            ImGui::BulletText("%s %s", ingredient.amount.c_str(),
-                                              ingredient.name.c_str());
-                        } else {
-                            ImGui::BulletText("%s %s %s", ingredient.amount.c_str(),
-                                              ingredient.unit.c_str(),
-                                              ingredient.name.c_str());
+                        std::string line = ingredient.amount;
+                        if (!ingredient.unit.empty()) {
+                            line += " " + ingredient.unit;
                         }
+                        line += " " + ingredient.name;
+                        ImGui::Bullet();
+                        DrawShapedWrapped(line, font_size,
+                                          ImGui::GetContentRegionAvail().x);
                     }
                     ImGui::Separator();
 
                     ImGui::Text("Steps");
                     for (int i = 0; i < static_cast<int>(recipe.steps.size()); ++i) {
-                        ImGui::Text("%d. %s", i + 1, recipe.steps[i].c_str());
+                        DrawShapedWrapped(std::to_string(i + 1) + ". " + recipe.steps[i],
+                                          font_size, ImGui::GetContentRegionAvail().x);
                     }
                     ImGui::Separator();
 
                     ImGui::Text("Notes");
-                    ImGui::TextWrapped("%s", recipe.notes.c_str());
+                    DrawShapedWrapped(recipe.notes, font_size,
+                                      ImGui::GetContentRegionAvail().x);
                 }
 
                 ImGui::PopStyleVar();
@@ -900,6 +937,7 @@ int main(int, char**) {
     }
 
     loader.clear();
+    ShutdownShapedText();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

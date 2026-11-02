@@ -7,7 +7,9 @@
 # Fedora equivalents of the Ubuntu packages in
 # install_dependencies_ubuntu.sh (cmake -> cmake, g++ -> gcc-c++,
 # libsdl2-dev -> SDL2-devel, libgl1-mesa-dev -> mesa-libGL-devel,
-# libsqlite3-dev -> sqlite-devel, git -> git).
+# libsqlite3-dev -> sqlite-devel, git -> git,
+# libfreetype-dev -> freetype-devel,
+# libfontconfig-dev -> fontconfig-devel).
 #
 # Unlike apt, dnf has no separate update step: dnf install
 # refreshes repository metadata as needed. The install is
@@ -28,6 +30,8 @@ $SUDO timeout 600 dnf install -y \
     gcc-c++ \
     git \
     SDL2-devel \
+    fontconfig-devel \
+    freetype-devel \
     libicu-devel \
     mesa-libGL-devel \
     sqlite-devel
