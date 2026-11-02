@@ -131,6 +131,17 @@ detail labels are selectable, so drag-select and Ctrl+C copy
 work (verified by pasting a selection into the search entry);
 list-row titles stay unselectable so row clicks select the
 recipe, the same trade-off as cpp-gtk4.
+Text input: done — description and notes moved from
+single-line entries to wrapped GtkTextViews (Tab moves
+focus, it does not insert a tab), so multiline editing
+works; GTK4's entries and text views have no built-in undo,
+so the form implements it with one pure-logic TextUndo
+(src/text_undo.odin, unit-tested) per text widget, driven
+by a key controller on the form window: Ctrl+Z undoes,
+Ctrl+Shift+Z and Ctrl+Y redo, in whichever text widget has
+focus, with typing runs under a second coalesced into one
+step. The servings spin button is left out on purpose: its
+input is already constrained to whole numbers.
 Upstream notes Linux and Windows support for the bindings;
 only Linux has been verified here.
 
@@ -139,7 +150,7 @@ and never pushed.
 
 ## Tests
 
-`odin test src` — 48 tests, all passing: recipe data and
+`odin test src` — 55 tests, all passing: recipe data and
 seed counts, search, JSON import (including the encoding
 fixtures, which need the test-data server on localhost:8000),
-JSON export, and image copy/collision.
+JSON export, image copy/collision, and text undo/redo.

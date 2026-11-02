@@ -733,6 +733,16 @@ StepRow :: struct {
 	entry: ^gtk.Widget,
 }
 
+// One undo registry row per form text widget, so the form
+// window's key handler can find the focused widget's TextUndo
+// without GTK type checks. is_text_view selects the buffer
+// API over the entry API.
+UndoEntry :: struct {
+	widget:       ^gtk.Widget,
+	undo:         ^TextUndo,
+	is_text_view: bool,
+}
+
 // Form holds the add window's widgets. Heap-allocated like
 // Detail: the window outlives the handler that opens it.
 Form :: struct {
@@ -744,6 +754,7 @@ Form :: struct {
 	ing_box, step_box:            ^gtk.Widget,
 	ing_rows:                     [dynamic]IngredientRow,
 	step_rows:                    [dynamic]StepRow,
+	undo_entries:                 [dynamic]UndoEntry,
 	// Image chosen with "Choose image…", stored as
 	// "images/<name>" on save; "" means no image.
 	image_path:  string,
@@ -762,6 +773,253 @@ set_entry_text :: proc(w: ^gtk.Widget, s: string) {
 	cs := strings.clone_to_cstring(s)
 	defer delete(cs)
 	gtk.editable_set_text(cast(^gtk.Editable)w, cs)
+}
+
+// text_view_text reads a TextView's buffer. The returned
+// string is a fresh clone (gtk_text_buffer_get_text allocates,
+// so it is freed here).
+text_view_text :: proc(view: ^gtk.Widget) -> string {
+	buffer := gtk.text_view_get_buffer(cast(^gtk.TextView)view)
+	start, end: gtk.TextIter
+	gtk.text_buffer_get_start_iter(buffer, &start)
+	gtk.text_buffer_get_end_iter(buffer, &end)
+	cs := gtk.text_buffer_get_text(buffer, &start, &end, false)
+	s, _ := strings.clone_from_cstring(cs)
+	glib.free(rawptr(cs))
+	return s
+}
+
+set_text_view_text :: proc(view: ^gtk.Widget, text: string) {
+	buffer := gtk.text_view_get_buffer(cast(^gtk.TextView)view)
+	cs := strings.clone_to_cstring(text)
+	defer delete(cs)
+	gtk.text_buffer_set_text(buffer, cs, -1)
+}
+
+// make_text_view builds a wrapped TextView (Tab moves focus,
+// it does not insert a tab) inside a scrolled window fixed
+// to height px. Returns the scrolled window for packing and
+// the view itself for reading and writing.
+make_text_view :: proc(
+	text: string,
+	height: i32,
+) -> (
+	scrolled, view: ^gtk.Widget,
+) {
+	view = gtk.text_view_new()
+	gtk.text_view_set_wrap_mode(cast(^gtk.TextView)view, .WRAP_WORD)
+	gtk.text_view_set_accepts_tab(cast(^gtk.TextView)view, false)
+	set_text_view_text(view, text)
+	scrolled = gtk.scrolled_window_new()
+	gtk.scrolled_window_set_child(cast(^gtk.ScrolledWindow)scrolled, view)
+	gtk.scrolled_window_set_policy(
+		cast(^gtk.ScrolledWindow)scrolled,
+		.POLICY_NEVER,
+		.POLICY_AUTOMATIC,
+	)
+	gtk.widget_set_size_request(scrolled, -1, height)
+	return
+}
+
+// --- Per-field undo/redo for the form ---
+//
+// GTK4's GtkEntry and GtkTextView have no built-in undo, so
+// each form text widget gets a TextUndo (text_undo.odin),
+// seeded with the widget's current contents and recorded on
+// every change. The servings spin button is left out on
+// purpose: its input is already constrained to the 1..100
+// range, so there is no free text to undo.
+
+register_entry_undo :: proc(f: ^Form, entry: ^gtk.Widget) {
+	undo := new(TextUndo)
+	text := entry_text(entry)
+	defer delete(text)
+	text_undo_seed(
+		undo,
+		text,
+		int(gtk.editable_get_position(cast(^gtk.Editable)entry)),
+	)
+	append(&f.undo_entries, UndoEntry{widget = entry, undo = undo})
+	gobj.signal_connect(
+		entry,
+		"changed",
+		cast(gobj.Callback)on_entry_undo_changed,
+		undo,
+	)
+}
+
+register_text_view_undo :: proc(f: ^Form, view: ^gtk.Widget) {
+	undo := new(TextUndo)
+	text := text_view_text(view)
+	defer delete(text)
+	buffer := gtk.text_view_get_buffer(cast(^gtk.TextView)view)
+	iter: gtk.TextIter
+	gtk.text_buffer_get_iter_at_mark(
+		buffer,
+		&iter,
+		gtk.text_buffer_get_insert(buffer),
+	)
+	text_undo_seed(undo, text, int(gtk.text_iter_get_offset(&iter)))
+	append(
+		&f.undo_entries,
+		UndoEntry{widget = view, undo = undo, is_text_view = true},
+	)
+	gobj.signal_connect(
+		buffer,
+		"changed",
+		cast(gobj.Callback)on_buffer_undo_changed,
+		undo,
+	)
+}
+
+on_entry_undo_changed :: proc "c" (editable: ^gtk.Editable, data: rawptr) {
+	context = runtime.default_context()
+	undo := cast(^TextUndo)data
+	if undo == nil {
+		return
+	}
+	cs := gtk.editable_get_text(editable)
+	text, _ := strings.clone_from_cstring(cs)
+	defer delete(text)
+	text_undo_record(
+		undo,
+		text,
+		int(gtk.editable_get_position(editable)),
+	)
+}
+
+on_buffer_undo_changed :: proc "c" (buffer: ^gtk.TextBuffer, data: rawptr) {
+	context = runtime.default_context()
+	undo := cast(^TextUndo)data
+	if undo == nil {
+		return
+	}
+	start, end: gtk.TextIter
+	gtk.text_buffer_get_start_iter(buffer, &start)
+	gtk.text_buffer_get_end_iter(buffer, &end)
+	cs := gtk.text_buffer_get_text(buffer, &start, &end, false)
+	text, _ := strings.clone_from_cstring(cs)
+	defer delete(text)
+	glib.free(rawptr(cs))
+	iter: gtk.TextIter
+	gtk.text_buffer_get_iter_at_mark(
+		buffer,
+		&iter,
+		gtk.text_buffer_get_insert(buffer),
+	)
+	text_undo_record(undo, text, int(gtk.text_iter_get_offset(&iter)))
+}
+
+apply_entry_snapshot :: proc(
+	entry: ^gtk.Widget,
+	snap: TextSnapshot,
+	undo: ^TextUndo,
+) {
+	text_undo_set_applying(undo, true)
+	set_entry_text(entry, snap.text)
+	gtk.editable_set_position(
+		cast(^gtk.Editable)entry,
+		i32(snap.cursor),
+	)
+	text_undo_set_applying(undo, false)
+}
+
+apply_text_view_snapshot :: proc(
+	view: ^gtk.Widget,
+	snap: TextSnapshot,
+	undo: ^TextUndo,
+) {
+	buffer := gtk.text_view_get_buffer(cast(^gtk.TextView)view)
+	text_undo_set_applying(undo, true)
+	set_text_view_text(view, snap.text)
+	iter: gtk.TextIter
+	// Clamps out-of-range offsets, so a stale cursor is safe.
+	gtk.text_buffer_get_iter_at_offset(buffer, &iter, i32(snap.cursor))
+	gtk.text_buffer_place_cursor(buffer, &iter)
+	text_undo_set_applying(undo, false)
+}
+
+// Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo, in whichever
+// form text widget has focus. Shift+Z reports keyval Z (not
+// z with a shift modifier), so undo and redo need separate
+// keyvals: 'z' is 0x7a, 'Z' is 0x5a, 'y' is 0x79. Anything
+// without a TextUndo (buttons, the spin button) falls
+// through untouched.
+on_form_key_pressed :: proc "c" (
+	controller: ^gtk.EventController,
+	keyval, keycode: u32,
+	state: gtk.ModifierType,
+	data: rawptr,
+) -> glib.boolean {
+	context = runtime.default_context()
+	_ = controller
+	_ = keycode
+	if u32(state) & u32(gtk.ModifierType.CONTROL_MASK) == 0 {
+		return false
+	}
+	is_undo := keyval == 0x7a
+	is_redo := keyval == 0x5a || keyval == 0x79
+	if !is_undo && !is_redo {
+		return false
+	}
+	f := cast(^Form)data
+	if f == nil {
+		return false
+	}
+	focus := gtk.window_get_focus(cast(^gtk.Window)f.window)
+	if focus == nil {
+		return false
+	}
+	for entry in f.undo_entries {
+		if entry.widget != focus {
+			continue
+		}
+		undo := entry.undo
+		if entry.is_text_view {
+			text := text_view_text(focus)
+			defer delete(text)
+			buffer := gtk.text_view_get_buffer(cast(^gtk.TextView)focus)
+			iter: gtk.TextIter
+			gtk.text_buffer_get_iter_at_mark(
+				buffer,
+				&iter,
+				gtk.text_buffer_get_insert(buffer),
+			)
+			cursor := int(gtk.text_iter_get_offset(&iter))
+			snap: TextSnapshot
+			ok: bool
+			if is_undo {
+				snap, ok = text_undo_undo(undo, text, cursor)
+			} else {
+				snap, ok = text_undo_redo(undo, text, cursor)
+			}
+			if !ok {
+				return true
+			}
+			defer snapshot_delete(snap)
+			apply_text_view_snapshot(focus, snap, undo)
+			return true
+		}
+		text := entry_text(focus)
+		defer delete(text)
+		cursor := int(
+			gtk.editable_get_position(cast(^gtk.Editable)focus),
+		)
+		snap: TextSnapshot
+		ok: bool
+		if is_undo {
+			snap, ok = text_undo_undo(undo, text, cursor)
+		} else {
+			snap, ok = text_undo_redo(undo, text, cursor)
+		}
+		if !ok {
+			return true
+		}
+		defer snapshot_delete(snap)
+		apply_entry_snapshot(focus, snap, undo)
+		return true
+	}
+	return false
 }
 
 // title_matches_search is the list filter, mirroring
@@ -836,11 +1094,19 @@ rebuild_list :: proc() {
 	start_image_loads()
 }
 
-add_ingredient_row :: proc(f: ^Form) {
+add_ingredient_row :: proc(f: ^Form, amount_text, unit_text, name_text: string) {
 	row_box := cast(^gtk.Box)gtk.box_new(.HORIZONTAL, 6)
 	amount := gtk.entry_new()
 	unit := gtk.entry_new()
 	name := gtk.entry_new()
+	// Texts are set before registering undo, so the seed is
+	// the prefilled value, not the empty entry.
+	set_entry_text(amount, amount_text)
+	set_entry_text(unit, unit_text)
+	set_entry_text(name, name_text)
+	register_entry_undo(f, amount)
+	register_entry_undo(f, unit)
+	register_entry_undo(f, name)
 	gtk.box_append(row_box, amount)
 	gtk.box_append(row_box, unit)
 	gtk.box_append(row_box, name)
@@ -859,9 +1125,11 @@ add_ingredient_row :: proc(f: ^Form) {
 	})
 }
 
-add_step_row :: proc(f: ^Form) {
+add_step_row :: proc(f: ^Form, step_text: string) {
 	row_box := cast(^gtk.Box)gtk.box_new(.HORIZONTAL, 6)
 	entry := gtk.entry_new()
+	set_entry_text(entry, step_text)
+	register_entry_undo(f, entry)
 	gtk.box_append(row_box, entry)
 	remove := gtk.button_new_with_label("Remove")
 	gtk.box_append(row_box, remove)
@@ -912,12 +1180,12 @@ on_remove_step :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 
 on_add_ingredient_row :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	context = runtime.default_context()
-	add_ingredient_row(cast(^Form)data)
+	add_ingredient_row(cast(^Form)data, "", "", "")
 }
 
 on_add_step_row :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	context = runtime.default_context()
-	add_step_row(cast(^Form)data)
+	add_step_row(cast(^Form)data, "")
 }
 
 on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
@@ -953,12 +1221,12 @@ on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	}
 	recipe := Recipe{
 		title       = title,
-		description = strings.trim_space(entry_text(f.description)),
+		description = strings.trim_space(text_view_text(f.description)),
 		servings    = int(servings),
 		image_path  = f.image_path,
 		ingredients = ingredients[:],
 		steps       = steps[:],
-		notes       = strings.trim_space(entry_text(f.notes)),
+		notes       = strings.trim_space(text_view_text(f.notes)),
 	}
 	// The strings above are heap clones that live through
 	// this call, and insert/update bind (SQLITE_STATIC) and
@@ -1026,19 +1294,33 @@ open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 	gtk.window_set_modal(cast(^gtk.Window)window, true)
 	gtk.window_set_default_size(cast(^gtk.Window)window, 500, 600)
 
+	// Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y for the form's text widgets.
+	key_controller := gtk.event_controller_key_new()
+	gobj.signal_connect(
+		key_controller,
+		"key-pressed",
+		cast(gobj.Callback)on_form_key_pressed,
+		f,
+	)
+	gtk.widget_add_controller(window, key_controller)
+
 	form_box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
 	gtk.box_append(form_box, new_label("Title:"))
 	f.title = gtk.entry_new()
 	if prefill != nil {
 		set_entry_text(f.title, prefill.title)
 	}
+	register_entry_undo(f, f.title)
 	gtk.box_append(form_box, f.title)
 	gtk.box_append(form_box, new_label("Description:"))
-	f.description = gtk.entry_new()
+	desc_text := ""
 	if prefill != nil {
-		set_entry_text(f.description, prefill.description)
+		desc_text = prefill.description
 	}
-	gtk.box_append(form_box, f.description)
+	desc_scrolled, desc_view := make_text_view(desc_text, 80)
+	f.description = desc_view
+	register_text_view_undo(f, desc_view)
+	gtk.box_append(form_box, desc_scrolled)
 	gtk.box_append(form_box, new_label("Servings:"))
 	f.servings = gtk.spin_button_new_with_range(1, 100, 1)
 	if prefill != nil {
@@ -1061,17 +1343,13 @@ open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 	gtk.box_append(form_box, add_ing)
 	if prefill != nil {
 		for ing in prefill.ingredients {
-			add_ingredient_row(f)
-			row := &f.ing_rows[len(f.ing_rows) - 1]
-			set_entry_text(row.amount, ing.amount)
-			set_entry_text(row.unit, ing.unit)
-			set_entry_text(row.name, ing.name)
+			add_ingredient_row(f, ing.amount, ing.unit, ing.name)
 		}
 		if len(f.ing_rows) == 0 {
-			add_ingredient_row(f)
+			add_ingredient_row(f, "", "", "")
 		}
 	} else {
-		add_ingredient_row(f)
+		add_ingredient_row(f, "", "", "")
 	}
 	gtk.box_append(form_box, new_label("Steps:"))
 	f.step_box = cast(^gtk.Widget)gtk.box_new(.VERTICAL, 6)
@@ -1086,22 +1364,23 @@ open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 	gtk.box_append(form_box, add_step)
 	if prefill != nil {
 		for step in prefill.steps {
-			add_step_row(f)
-			row := &f.step_rows[len(f.step_rows) - 1]
-			set_entry_text(row.entry, step)
+			add_step_row(f, step)
 		}
 		if len(f.step_rows) == 0 {
-			add_step_row(f)
+			add_step_row(f, "")
 		}
 	} else {
-		add_step_row(f)
+		add_step_row(f, "")
 	}
 	gtk.box_append(form_box, new_label("Notes:"))
-	f.notes = gtk.entry_new()
+	notes_text := ""
 	if prefill != nil {
-		set_entry_text(f.notes, prefill.notes)
+		notes_text = prefill.notes
 	}
-	gtk.box_append(form_box, f.notes)
+	notes_scrolled, notes_view := make_text_view(notes_text, 80)
+	f.notes = notes_view
+	register_text_view_undo(f, notes_view)
+	gtk.box_append(form_box, notes_scrolled)
 	if prefill != nil {
 		f.image_path = prefill.image_path
 	}
