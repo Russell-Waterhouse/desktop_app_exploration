@@ -82,6 +82,10 @@ form window (title required, servings spin button, dynamic
 ingredient and step rows with Remove buttons); saving
 inserts into the database via db.zig, reloads, and selects
 the new recipe.
+Edit recipe: done — an "Edit recipe" button in the
+detail pane opens the same form pre-filled with the
+selected recipe; saving updates it in place (children
+replaced) instead of inserting.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.

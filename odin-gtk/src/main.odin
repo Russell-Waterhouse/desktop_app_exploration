@@ -37,6 +37,10 @@ db_handle: ^Sqlite_Db
 main_list_box: ^gtk.ListBox
 active_form: ^Form
 
+// Id of the recipe currently shown in the detail pane (-1
+// when none is selected); the Edit button acts on it.
+selected_id: i64 = -1
+
 // Detail holds the widgets the row-selected handler updates.
 // Label widgets are stored as ^Widget (what label_new
 // returns) and cast to ^Label where label_set_text needs one.
@@ -119,6 +123,7 @@ on_row_selected :: proc "c" (box: ^gtk.ListBox, row: ^gtk.ListBoxRow, data: rawp
 	if index < 0 || int(index) >= len(recipes) {
 		return
 	}
+	selected_id = recipes[index].id
 	show_recipe(cast(^Detail)data, recipes[index])
 }
 
@@ -170,6 +175,14 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	d.notes = detail_label()
 	gtk.label_set_wrap(cast(^gtk.Label)d.notes, true)
 	gtk.box_append(detail_box, d.notes)
+	edit_button := gtk.button_new_with_label("Edit recipe")
+	gobj.signal_connect(
+		edit_button,
+		"clicked",
+		cast(gobj.Callback)on_edit_clicked,
+		window,
+	)
+	gtk.box_append(detail_box, edit_button)
 
 	detail_scrolled := gtk.scrolled_window_new()
 	gtk.scrolled_window_set_child(
@@ -231,6 +244,7 @@ StepRow :: struct {
 // Detail: the window outlives the handler that opens it.
 Form :: struct {
 	window:                       ^gtk.Widget,
+	edit_id:                      i64,
 	title, description, servings: ^gtk.Widget,
 	notes:                        ^gtk.Widget,
 	error_label:                  ^gtk.Widget,
@@ -243,6 +257,14 @@ entry_text :: proc(w: ^gtk.Widget) -> string {
 	cs := gtk.editable_get_text(cast(^gtk.Editable)w)
 	s, _ := strings.clone_from_cstring(cs)
 	return s
+}
+
+// set_entry_text writes into an entry. gtk_editable_set_text
+// copies the string, so the clone can be freed right away.
+set_entry_text :: proc(w: ^gtk.Widget, s: string) {
+	cs := strings.clone_to_cstring(s)
+	defer delete(cs)
+	gtk.editable_set_text(cast(^gtk.Editable)w, cs)
 }
 
 rebuild_list :: proc() {
@@ -382,12 +404,22 @@ on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 		notes       = strings.trim_space(entry_text(f.notes)),
 	}
 	// The strings above are heap clones that live through
-	// this call, and insert binds (SQLITE_STATIC) and steps
-	// before returning, so they are valid throughout.
-	id, err := insert_recipe(db_handle, recipe)
-	if err != "" {
-		set_text(f.error_label, err)
-		return
+	// this call, and insert/update bind (SQLITE_STATIC) and
+	// step before returning, so they are valid throughout.
+	saved_id := f.edit_id
+	if f.edit_id >= 0 {
+		recipe.id = f.edit_id
+		if err := update_recipe(db_handle, recipe); err != "" {
+			set_text(f.error_label, err)
+			return
+		}
+	} else {
+		id, err := insert_recipe(db_handle, recipe)
+		if err != "" {
+			set_text(f.error_label, err)
+			return
+		}
+		saved_id = id
 	}
 	loaded, load_err := load_recipes(db_handle)
 	if load_err != "" {
@@ -397,7 +429,7 @@ on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	recipes = loaded
 	rebuild_list()
 	for r, i in recipes {
-		if r.id == id {
+		if r.id == saved_id {
 			gtk.list_box_select_row(
 				main_list_box,
 				gtk.list_box_get_row_at_index(main_list_box, i32(i)),
@@ -416,14 +448,23 @@ on_add_cancel :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	gtk.window_destroy(cast(^gtk.Window)f.window)
 }
 
-on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+// open_form builds the add/edit form window. prefill is
+// nil for adding; for editing it points at the selected
+// recipe in recipes (its fields are copied into the
+// entries immediately, so the pointer need not outlive
+// this call), and edit_id is that recipe's id, or -1.
+open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 	context = runtime.default_context()
-	parent := cast(^gtk.Window)data
 	f := new(Form)
+	f.edit_id = edit_id
 	active_form = f
 	window := gtk.window_new()
 	f.window = window
-	gtk.window_set_title(cast(^gtk.Window)window, "Add Recipe")
+	if edit_id >= 0 {
+		gtk.window_set_title(cast(^gtk.Window)window, "Edit Recipe")
+	} else {
+		gtk.window_set_title(cast(^gtk.Window)window, "Add Recipe")
+	}
 	gtk.window_set_transient_for(cast(^gtk.Window)window, parent)
 	gtk.window_set_modal(cast(^gtk.Window)window, true)
 	gtk.window_set_default_size(cast(^gtk.Window)window, 500, 600)
@@ -431,12 +472,24 @@ on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	form_box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
 	gtk.box_append(form_box, new_label("Title:"))
 	f.title = gtk.entry_new()
+	if prefill != nil {
+		set_entry_text(f.title, prefill.title)
+	}
 	gtk.box_append(form_box, f.title)
 	gtk.box_append(form_box, new_label("Description:"))
 	f.description = gtk.entry_new()
+	if prefill != nil {
+		set_entry_text(f.description, prefill.description)
+	}
 	gtk.box_append(form_box, f.description)
 	gtk.box_append(form_box, new_label("Servings:"))
 	f.servings = gtk.spin_button_new_with_range(1, 100, 1)
+	if prefill != nil {
+		gtk.spin_button_set_value(
+			cast(^gtk.SpinButton)f.servings,
+			f64(prefill.servings),
+		)
+	}
 	gtk.box_append(form_box, f.servings)
 	gtk.box_append(form_box, new_label("Ingredients:"))
 	f.ing_box = cast(^gtk.Widget)gtk.box_new(.VERTICAL, 6)
@@ -449,7 +502,20 @@ on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 		f,
 	)
 	gtk.box_append(form_box, add_ing)
-	add_ingredient_row(f)
+	if prefill != nil {
+		for ing in prefill.ingredients {
+			add_ingredient_row(f)
+			row := &f.ing_rows[len(f.ing_rows) - 1]
+			set_entry_text(row.amount, ing.amount)
+			set_entry_text(row.unit, ing.unit)
+			set_entry_text(row.name, ing.name)
+		}
+		if len(f.ing_rows) == 0 {
+			add_ingredient_row(f)
+		}
+	} else {
+		add_ingredient_row(f)
+	}
 	gtk.box_append(form_box, new_label("Steps:"))
 	f.step_box = cast(^gtk.Widget)gtk.box_new(.VERTICAL, 6)
 	gtk.box_append(form_box, f.step_box)
@@ -461,9 +527,23 @@ on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 		f,
 	)
 	gtk.box_append(form_box, add_step)
-	add_step_row(f)
+	if prefill != nil {
+		for step in prefill.steps {
+			add_step_row(f)
+			row := &f.step_rows[len(f.step_rows) - 1]
+			set_entry_text(row.entry, step)
+		}
+		if len(f.step_rows) == 0 {
+			add_step_row(f)
+		}
+	} else {
+		add_step_row(f)
+	}
 	gtk.box_append(form_box, new_label("Notes:"))
 	f.notes = gtk.entry_new()
+	if prefill != nil {
+		set_entry_text(f.notes, prefill.notes)
+	}
 	gtk.box_append(form_box, f.notes)
 	f.error_label = detail_label()
 	gtk.box_append(form_box, f.error_label)
@@ -499,6 +579,24 @@ on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 		cast(^gtk.Widget)form_scrolled,
 	)
 	gtk.window_present(cast(^gtk.Window)window)
+}
+
+on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	open_form(cast(^gtk.Window)data, nil, -1)
+}
+
+on_edit_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	if selected_id < 0 {
+		return
+	}
+	for r, i in recipes {
+		if r.id == selected_id {
+			open_form(cast(^gtk.Window)data, &recipes[i], selected_id)
+			return
+		}
+	}
 }
 
 main :: proc() {

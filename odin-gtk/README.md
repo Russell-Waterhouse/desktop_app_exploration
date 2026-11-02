@@ -74,6 +74,10 @@ form window (title required, servings spin button, dynamic
 ingredient and step rows with Remove buttons); saving
 inserts into the database via db.odin, reloads, and selects
 the new recipe.
+Edit recipe: done — an "Edit recipe" button in the
+detail pane opens the same form pre-filled with the
+selected recipe; saving updates it in place (children
+replaced) instead of inserting.
 Upstream notes Linux and Windows support for the bindings;
 only Linux has been verified here.
 

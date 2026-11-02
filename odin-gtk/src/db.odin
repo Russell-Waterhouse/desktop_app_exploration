@@ -129,8 +129,9 @@ open_database :: proc(path: string) -> (^Sqlite_Db, string) {
 	return db, ""
 }
 
-// Insert arrived with the add-recipe step; update and
-// delete arrive with the edit/delete steps.
+// Insert arrived with the add-recipe step, update with
+// the edit-recipe step; delete arrives with the delete
+// step.
 
 close_database :: proc(db: ^Sqlite_Db) {
 	if db != nil {
@@ -449,4 +450,62 @@ insert_recipe :: proc(db: ^Sqlite_Db, recipe: Recipe) -> (i64, string) {
 		return 0, err
 	}
 	return recipe_id, ""
+}
+
+// Update a recipe and replace its ingredients and steps, in
+// one transaction, like the Rust version's update_recipe.
+update_recipe :: proc(db: ^Sqlite_Db, recipe: Recipe) -> string {
+	if err := exec_sql(db, "BEGIN"); err != "" {
+		return err
+	}
+	stmt, err := prepare(db, `UPDATE recipes SET title = ?1,
+		description = ?2, servings = ?3, image_path = ?4, notes = ?5
+		WHERE id = ?6`)
+	if err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	failed := ""
+	if e := bind_str(stmt, 1, recipe.title); e != "" {
+		failed = e
+	} else if e := bind_str(stmt, 2, recipe.description); e != "" {
+		failed = e
+	} else if rc := sqlite3_bind_int64(stmt, 3, i64(recipe.servings)); rc != SQLITE_OK {
+		failed = "bind servings"
+	} else if recipe.image_path == "" {
+		if rc := sqlite3_bind_null(stmt, 4); rc != SQLITE_OK {
+			failed = "bind image_path"
+		}
+	} else if e := bind_str(stmt, 4, recipe.image_path); e != "" {
+		failed = e
+	}
+	if failed == "" {
+		if e := bind_str(stmt, 5, recipe.notes); e != "" {
+			failed = e
+		} else if rc := sqlite3_bind_int64(stmt, 6, recipe.id); rc != SQLITE_OK {
+			failed = "bind id"
+		} else if rc := sqlite3_step(stmt); rc != SQLITE_DONE {
+			failed = db_error(db, "updating recipe")
+		}
+	}
+	sqlite3_finalize(stmt)
+	if failed != "" {
+		exec_sql(db, "ROLLBACK")
+		return failed
+	}
+	// The id comes from our own loaded data, so formatting it
+	// into these statements is safe; it avoids three more binds.
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM ingredients WHERE recipe_id = %d", recipe.id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := exec_sql(db, fmt.tprintf("DELETE FROM steps WHERE recipe_id = %d", recipe.id)); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	if err := insert_children(db, recipe.id, recipe); err != "" {
+		exec_sql(db, "ROLLBACK")
+		return err
+	}
+	return exec_sql(db, "COMMIT")
 }

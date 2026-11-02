@@ -93,7 +93,7 @@ has been tested on Fedora yet.
 - [X] recipe view with hard-coded data
 - [X] recipe view with SQLite integration
 - [X] add recipe
-- [ ] edit recipe
+- [X] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes
@@ -130,7 +130,7 @@ has been tested on Fedora yet.
 - [X] recipe view with hard-coded data
 - [X] recipe view with SQLite integration
 - [X] add recipe
-- [ ] edit recipe
+- [X] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes

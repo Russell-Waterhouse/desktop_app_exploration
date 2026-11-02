@@ -38,8 +38,9 @@ const std = @import("std");
 // load_error instead of crashing; main shows that error in
 // the detail pane.
 //
-// Insert arrived with the add-recipe step; update and
-// delete arrive with the edit/delete steps.
+// Insert arrived with the add-recipe step, update with
+// the edit-recipe step; delete arrives with the delete
+// step.
 
 const sqlite3 = opaque {};
 const sqlite3_stmt = opaque {};
@@ -388,6 +389,51 @@ pub fn insertRecipe(recipe: Recipe) !i64 {
     try insertChildren(db, recipe_id, recipe);
     try exec(db, "COMMIT");
     return recipe_id;
+}
+
+
+/// Replace a recipe (by id) and its children, in one
+/// transaction. Like the Rust version's update_recipe; the
+/// caller reloads afterwards.
+pub fn updateRecipe(recipe: Recipe) !void {
+    const db = db_handle orelse return error.NoDatabase;
+    try exec(db, "BEGIN");
+    errdefer exec(db, "ROLLBACK") catch {};
+    const rstmt = try prepare(db,
+        \\UPDATE recipes SET title = ?1, description = ?2,
+        \\  servings = ?3, image_path = ?4, notes = ?5
+        \\  WHERE id = ?6
+    );
+    defer _ = sqlite3_finalize(rstmt);
+    try bindText(rstmt, 1, recipe.title);
+    try bindText(rstmt, 2, recipe.description);
+    try bindInt(rstmt, 3, recipe.servings);
+    try bindImagePath(rstmt, 4, recipe.image_path);
+    try bindText(rstmt, 5, recipe.notes);
+    try bindInt(rstmt, 6, recipe.id);
+    if (sqlite3_step(rstmt) != SQLITE_DONE) {
+        return setError(db, "updating recipe", .{});
+    }
+    // Children are deleted explicitly (no ON DELETE CASCADE
+    // in the schema) and re-inserted from the draft below.
+    {
+        const dstmt = try prepare(db, "DELETE FROM ingredients WHERE recipe_id = ?1");
+        defer _ = sqlite3_finalize(dstmt);
+        try bindInt(dstmt, 1, recipe.id);
+        if (sqlite3_step(dstmt) != SQLITE_DONE) {
+            return setError(db, "deleting old ingredients", .{});
+        }
+    }
+    {
+        const dstmt = try prepare(db, "DELETE FROM steps WHERE recipe_id = ?1");
+        defer _ = sqlite3_finalize(dstmt);
+        try bindInt(dstmt, 1, recipe.id);
+        if (sqlite3_step(dstmt) != SQLITE_DONE) {
+            return setError(db, "deleting old steps", .{});
+        }
+    }
+    try insertChildren(db, recipe.id, recipe);
+    try exec(db, "COMMIT");
 }
 
 /// Re-read recipes from the database after an insert, update,
