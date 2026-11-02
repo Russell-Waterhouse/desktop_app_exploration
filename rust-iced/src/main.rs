@@ -6,7 +6,8 @@ mod search;
 mod seed;
 
 use iced::widget::{
-    button, column, container, image, row, scrollable, text, text_input,
+    button, column, container, image, row, scrollable, text, text_editor,
+    text_input,
 };
 use iced::widget::image::Handle;
 use iced::{
@@ -146,6 +147,10 @@ enum Message {
     // The instant itself is not used: progress is computed from
     // the animation start time in view().
     Tick,
+    // Cursor/selection moves in a read-only detail field. Edit
+    // actions arriving here are dropped in update(); see
+    // detail_contents.
+    DetailEdit(usize, text_editor::Action),
 }
 
 // How long a list/detail transition takes, in seconds.
@@ -198,6 +203,17 @@ struct RecipeManager {
     // for, unlike import.
     export_message: Option<String>,
     export_error: Option<String>,
+    // Read-only detail display: one text_editor::Content per
+    // displayed detail field, in the order detail_view consumes
+    // them (title, description, servings, ingredients in order,
+    // steps in order, notes). The contents live here, not in
+    // view(), because cursor and selection state must survive
+    // frames. detail_for records which recipe they were built
+    // from; update() rebuilds them when the selection moves or a
+    // save invalidates them, and at no other time, so a rebuild
+    // never wipes the user's selection mid-drag.
+    detail_contents: Vec<text_editor::Content>,
+    detail_for: Option<i64>,
 }
 
 impl RecipeManager {
@@ -228,6 +244,8 @@ impl RecipeManager {
             import_error: None,
             export_message: None,
             export_error: None,
+            detail_contents: Vec::new(),
+            detail_for: None,
         };
         // The first recipe shown at startup animates in, like a
         // selection change does.
@@ -236,6 +254,7 @@ impl RecipeManager {
             app.detail_anim_start = Some(Instant::now());
         }
         app.start_image_loads();
+        app.rebuild_detail_contents();
         app
     }
 
@@ -493,6 +512,10 @@ impl RecipeManager {
                                     self.selected_id = Some(recipe.id);
                                     self.form_error = None;
                                     self.mode = Mode::Viewing;
+                                    // Same id, new text after an
+                                    // edit: force a detail rebuild
+                                    // at the end of update().
+                                    self.detail_for = None;
                                 }
                                 Err(err) => {
                                     self.form_error = Some(err.to_string());
@@ -696,6 +719,22 @@ impl RecipeManager {
                         Some("No recipe selected to export.".to_string());
                 }
             }
+            Message::DetailEdit(index, action) => {
+                // Read-only display: cursor and selection actions
+                // move through to the content, but anything that
+                // would change the text is dropped here, so typing,
+                // pasting, deleting, or cutting into a detail field
+                // visibly does nothing. Copy is unaffected: iced's
+                // text_editor writes the selection to the clipboard
+                // internally on Ctrl+C, without an Edit action.
+                if !matches!(action, text_editor::Action::Edit(_)) {
+                    if let Some(content) =
+                        self.detail_contents.get_mut(index)
+                    {
+                        content.perform(action);
+                    }
+                }
+            }
             Message::Tick => {
                 self.spinner_frame = self.spinner_frame.wrapping_add(1);
                 self.poll_image_loads();
@@ -706,6 +745,14 @@ impl RecipeManager {
         // introduced; paths already cached, failed, or loading are
         // skipped, so nothing is decoded twice.
         self.start_image_loads();
+        // Refresh the read-only detail contents when the selection
+        // moved, or when a save invalidated them (detail_for set to
+        // None there). Deliberately not on every message: a rebuild
+        // wipes cursor and selection, and Ticks arrive every 16ms
+        // during the detail animation.
+        if self.detail_for != self.selected_id {
+            self.rebuild_detail_contents();
+        }
         Task::none()
     }
 
@@ -885,11 +932,10 @@ impl RecipeManager {
 
     // List/detail transition progress, 0.0 (just changed) to 1.0
     // (settled), eased so it starts fast and slows into place.
-    // The detail slides up into place (12px, shrinking to 0) while
-    // its text fades in (alpha rising to 1). Ticks keep the view
-    // re-rendering while the transition runs; Iced otherwise only
-    // re-renders on input, and the animation would freeze on its
-    // first frame.
+    // The detail slides up into place (12px, shrinking to 0).
+    // Ticks keep the view re-rendering while the transition runs;
+    // Iced otherwise only re-renders on input, and the animation
+    // would freeze on its first frame.
     fn detail_progress(&self) -> f32 {
         match self.detail_anim_start {
             Some(start) => {
@@ -901,23 +947,94 @@ impl RecipeManager {
         }
     }
 
-    // Detail text in the transition's current fade. The app pins
-    // the Light theme (see main), so black text with a rising
-    // alpha is the fade-in, whatever the system theme is.
-    fn faded(&self, content: &str) -> iced::widget::Text<'_, iced::Theme> {
-        let alpha = self.detail_progress();
-        text(content.to_string())
-            .color(Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: alpha,
-            })
+    // One read-only detail field, in place of the plain text label
+    // it replaces. A text_editor with its edit actions dropped (see
+    // the DetailEdit arm) behaves as a selectable label: drag to
+    // select, double-click for a word, triple-click for a line,
+    // Ctrl+A for all, Ctrl+C copies via iced's internal copy
+    // handling. Styled flat (transparent background, no border,
+    // no padding) so it reads as a label rather than an input box.
+    // The text fade the old labels had is gone: editors take no
+    // alpha, so detail text appears at full opacity while the pane
+    // still slides in. Falls back to plain text if the contents
+    // are stale, which keeps view() total even if a rebuild was
+    // missed.
+    fn detail_field(
+        &self,
+        index: usize,
+        fallback: &str,
+        size: f32,
+    ) -> Element<'_, Message> {
+        if let Some(content) = self.detail_contents.get(index) {
+            text_editor(content)
+                .on_action(move |action| Message::DetailEdit(index, action))
+                .size(size)
+                .padding(Padding::new(0.0))
+                .style(|theme, status| {
+                    let mut style = text_editor::default(theme, status);
+                    style.background =
+                        iced::Background::Color(Color::TRANSPARENT);
+                    style.border = iced::Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    };
+                    style
+                })
+                .into()
+        } else {
+            text(fallback.to_string()).size(size).into()
+        }
+    }
+
+    // Rebuilds detail_contents for the selected recipe, in the
+    // exact order detail_view consumes them: title, description,
+    // "Servings: N", one per ingredient, one per step, notes.
+    fn rebuild_detail_contents(&mut self) {
+        self.detail_for = self.selected_id;
+        self.detail_contents.clear();
+        let Some(recipe) = self.selected_recipe().cloned() else {
+            return;
+        };
+        self.detail_contents
+            .push(text_editor::Content::with_text(&recipe.title));
+        self.detail_contents
+            .push(text_editor::Content::with_text(&recipe.description));
+        self.detail_contents.push(text_editor::Content::with_text(
+            &format!("Servings: {}", recipe.servings),
+        ));
+        for ingredient in &recipe.ingredients {
+            if ingredient.unit.is_empty() {
+                self.detail_contents.push(
+                    text_editor::Content::with_text(&format!(
+                        "• {} {}",
+                        ingredient.amount, ingredient.name
+                    )),
+                );
+            } else {
+                self.detail_contents.push(
+                    text_editor::Content::with_text(&format!(
+                        "• {} {} {}",
+                        ingredient.amount, ingredient.unit, ingredient.name
+                    )),
+                );
+            }
+        }
+        for (index, step) in recipe.steps.iter().enumerate() {
+            self.detail_contents.push(text_editor::Content::with_text(
+                &format!("{}. {}", index + 1, step),
+            ));
+        }
+        self.detail_contents
+            .push(text_editor::Content::with_text(&recipe.notes));
     }
 
     fn detail_view(&self, recipe: &Recipe) -> Element<'_, Message> {
         let progress = self.detail_progress();
         let slide = (1.0 - progress) * 12.0;
+        // Indices into detail_contents; see rebuild_detail_contents.
+        let n_ingredients = recipe.ingredients.len();
+        let n_steps = recipe.steps.len();
 
         let image_block: Element<Message> =
             if let Some(path) = &recipe.image_path {
@@ -945,9 +1062,13 @@ impl RecipeManager {
             };
 
         let mut detail = column![
-            self.faded(&recipe.title).size(24.0),
-            self.faded(&recipe.description),
-            self.faded(&format!("Servings: {}", recipe.servings)),
+            self.detail_field(0, &recipe.title, 24.0),
+            self.detail_field(1, &recipe.description, 16.0),
+            self.detail_field(
+                2,
+                &format!("Servings: {}", recipe.servings),
+                16.0
+            ),
             image_block,
             row![
                 button("Edit").on_press(Message::EditClicked),
@@ -981,25 +1102,38 @@ impl RecipeManager {
             );
         }
         detail = detail.push(text("Ingredients").size(20.0));
-        for ingredient in &recipe.ingredients {
+        for (i, ingredient) in recipe.ingredients.iter().enumerate() {
             if ingredient.unit.is_empty() {
-                detail = detail.push(self.faded(&format!(
-                    "• {} {}",
-                    ingredient.amount, ingredient.name
-                )));
+                detail = detail.push(self.detail_field(
+                    3 + i,
+                    &format!("• {} {}", ingredient.amount, ingredient.name),
+                    16.0,
+                ));
             } else {
-                detail = detail.push(self.faded(&format!(
-                    "• {} {} {}",
-                    ingredient.amount, ingredient.unit, ingredient.name
-                )));
+                detail = detail.push(self.detail_field(
+                    3 + i,
+                    &format!(
+                        "• {} {} {}",
+                        ingredient.amount, ingredient.unit, ingredient.name
+                    ),
+                    16.0,
+                ));
             }
         }
         detail = detail.push(text("Steps").size(20.0));
         for (index, step) in recipe.steps.iter().enumerate() {
-            detail = detail.push(self.faded(&format!("{}. {}", index + 1, step)));
+            detail = detail.push(self.detail_field(
+                3 + n_ingredients + index,
+                &format!("{}. {}", index + 1, step),
+                16.0,
+            ));
         }
         detail = detail.push(text("Notes").size(20.0));
-        detail = detail.push(self.faded(&recipe.notes));
+        detail = detail.push(self.detail_field(
+            3 + n_ingredients + n_steps,
+            &recipe.notes,
+            16.0,
+        ));
 
         // The slide: top padding that shrinks to 0 as the fade
         // completes. Applies to the viewing detail only, not the
@@ -1198,6 +1332,8 @@ mod tests {
             import_error: None,
             export_message: None,
             export_error: None,
+            detail_contents: Vec::new(),
+            detail_for: None,
         }
     }
 
