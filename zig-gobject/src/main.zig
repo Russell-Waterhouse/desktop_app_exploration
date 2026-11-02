@@ -159,12 +159,27 @@ fn clear_detail(detail: *Detail) void {
     gtk.Label.setText(detail.notes, "");
 }
 
+fn on_search_changed(_: *gtk.SearchEntry, _: *gtk.Window) callconv(.c) void {
+    rebuild_list();
+    if (filtered.items.len > 0) {
+        selected_id = db.recipes[filtered.items[0]].id;
+        show_recipe(detail_ptr, db.recipes[filtered.items[0]]);
+        if (gtk.ListBox.getRowAtIndex(main_list_box, 0)) |row| {
+            gtk.ListBox.selectRow(main_list_box, row);
+        }
+    } else {
+        selected_id = -1;
+        clear_detail(detail_ptr);
+    }
+}
+
 fn on_row_selected(_: *gtk.ListBox, row: ?*gtk.ListBoxRow, detail: *Detail) callconv(.c) void {
     const r = row orelse return;
     const index = gtk.ListBoxRow.getIndex(r);
-    if (index < 0 or index >= db.recipes.len) return;
-    selected_id = db.recipes[@intCast(index)].id;
-    show_recipe(detail, db.recipes[@intCast(index)]);
+    if (index < 0 or index >= filtered.items.len) return;
+    const recipe_index = filtered.items[@intCast(index)];
+    selected_id = db.recipes[recipe_index].id;
+    show_recipe(detail, db.recipes[recipe_index]);
 }
 
 fn detail_label() *gtk.Label {
@@ -189,6 +204,13 @@ var selected_id: i64 = -1;
 var pending_delete_id: i64 = -1;
 
 var detail_ptr: *Detail = undefined;
+
+var search_entry: *gtk.SearchEntry = undefined;
+
+// Indices into db.recipes, in list order, after applying
+// the search filter. Rebuilt by apply_filter on every
+// list rebuild.
+var filtered: std.ArrayList(usize) = .empty;
 
 const IngredientRow = struct {
     box: *gtk.Widget,
@@ -238,10 +260,42 @@ fn add_list_row(list_box: *gtk.ListBox, title: [:0]const u8) void {
     gtk.ListBox.append(list_box, row_label.as(gtk.Widget));
 }
 
+// title_matches_search is the list filter, mirroring
+// cpp-gtk4's search.h: case-insensitive substring match
+// on the recipe TITLE only; an empty query matches
+// everything; the query is NOT trimmed.
+fn title_matches_search(title: [:0]const u8, query: [:0]const u8) bool {
+    if (query.len == 0) return true;
+    if (query.len > title.len) return false;
+    var i: usize = 0;
+    while (i + query.len <= title.len) : (i += 1) {
+        var ok = true;
+        for (query, 0..) |qc, j| {
+            if (std.ascii.toLower(title[i + j]) != std.ascii.toLower(qc)) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
+fn apply_filter() void {
+    filtered.clearRetainingCapacity();
+    const query = std.mem.span(gtk.Editable.getText(search_entry.as(gtk.Editable)));
+    for (db.recipes, 0..) |recipe, i| {
+        if (title_matches_search(recipe.title, query)) {
+            filtered.append(std.heap.page_allocator, i) catch @panic("oom");
+        }
+    }
+}
+
 fn rebuild_list() void {
+    apply_filter();
     gtk.ListBox.removeAll(main_list_box);
-    for (db.recipes) |recipe| {
-        add_list_row(main_list_box, recipe.title);
+    for (filtered.items) |idx| {
+        add_list_row(main_list_box, db.recipes[idx].title);
     }
 }
 
@@ -375,9 +429,9 @@ fn on_add_save(_: *gtk.Button, form: *Form) callconv(.c) void {
         return;
     };
     rebuild_list();
-    for (db.recipes, 0..) |r, i| {
-        if (r.id == saved_id) {
-            if (gtk.ListBox.getRowAtIndex(main_list_box, @intCast(i))) |row| {
+    for (filtered.items, 0..) |idx, p| {
+        if (db.recipes[idx].id == saved_id) {
+            if (gtk.ListBox.getRowAtIndex(main_list_box, @intCast(p))) |row| {
                 gtk.ListBox.selectRow(main_list_box, row);
             }
             break;
@@ -558,9 +612,9 @@ fn on_delete_confirm(_: *gtk.Button, window: *gtk.Window) callconv(.c) void {
         return;
     };
     rebuild_list();
-    if (db.recipes.len > 0) {
-        selected_id = db.recipes[0].id;
-        show_recipe(detail_ptr, db.recipes[0]);
+    if (filtered.items.len > 0) {
+        selected_id = db.recipes[filtered.items[0]].id;
+        show_recipe(detail_ptr, db.recipes[filtered.items[0]]);
         if (gtk.ListBox.getRowAtIndex(main_list_box, 0)) |row| {
             gtk.ListBox.selectRow(main_list_box, row);
         }
@@ -584,9 +638,10 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
 
     var list_box = gtk.ListBox.new();
     main_list_box = list_box;
-    for (db.recipes) |recipe| {
-        add_list_row(list_box, recipe.title);
-    }
+    search_entry = gtk.SearchEntry.new();
+    gtk.SearchEntry.setPlaceholderText(search_entry, "Type to filter recipes…");
+    _ = gtk.SearchEntry.signals.search_changed.connect(search_entry, *gtk.Window, &on_search_changed, window.as(gtk.Window), .{});
+    rebuild_list();
     var list_scrolled = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(list_scrolled, list_box.as(gtk.Widget));
     gtk.Widget.setSizeRequest(list_scrolled.as(gtk.Widget), 250, -1);
@@ -631,6 +686,7 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     var add_button = gtk.Button.newWithLabel("Add recipe");
     _ = gtk.Button.signals.clicked.connect(add_button, *gtk.Window, &on_add_clicked, window.as(gtk.Window), .{});
     var left_box = gtk.Box.new(gtk.Orientation.vertical, 6);
+    gtk.Box.append(left_box, search_entry.as(gtk.Widget));
     gtk.Box.append(left_box, add_button.as(gtk.Widget));
     gtk.Box.append(left_box, list_scrolled.as(gtk.Widget));
 
@@ -642,8 +698,8 @@ fn activate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     _ = gtk.ListBox.signals.row_selected.connect(list_box, *Detail, &on_row_selected, detail, .{});
     if (db.load_error) |err| {
         gtk.Label.setText(detail.title, err);
-    } else if (db.recipes.len > 0) {
-        show_recipe(detail, db.recipes[0]);
+    } else if (filtered.items.len > 0) {
+        show_recipe(detail, db.recipes[filtered.items[0]]);
         if (gtk.ListBox.getRowAtIndex(list_box, 0)) |row0| {
             gtk.ListBox.selectRow(list_box, row0);
         }

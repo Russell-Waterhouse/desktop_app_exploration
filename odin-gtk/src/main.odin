@@ -36,6 +36,12 @@ db_error_msg: string
 db_handle: ^Sqlite_Db
 main_list_box: ^gtk.ListBox
 detail_ptr: ^Detail
+search_entry: ^gtk.Widget
+
+// Indices into recipes, in list order, after applying
+// the search filter. Rebuilt by apply_filter on every
+// list rebuild.
+filtered: [dynamic]int
 active_form: ^Form
 
 // Id of the recipe currently shown in the detail pane (-1
@@ -143,11 +149,30 @@ on_row_selected :: proc "c" (box: ^gtk.ListBox, row: ^gtk.ListBoxRow, data: rawp
 		return
 	}
 	index := gtk.list_box_row_get_index(row)
-	if index < 0 || int(index) >= len(recipes) {
+	if index < 0 || int(index) >= len(filtered) {
 		return
 	}
-	selected_id = recipes[index].id
-	show_recipe(cast(^Detail)data, recipes[index])
+	recipe_index := filtered[index]
+	selected_id = recipes[recipe_index].id
+	show_recipe(cast(^Detail)data, recipes[recipe_index])
+}
+
+on_search_changed :: proc "c" (entry: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = entry
+	_ = data
+	rebuild_list()
+	if len(filtered) > 0 {
+		selected_id = recipes[filtered[0]].id
+		show_recipe(detail_ptr, recipes[filtered[0]])
+		row := gtk.list_box_get_row_at_index(main_list_box, 0)
+		if row != nil {
+			gtk.list_box_select_row(main_list_box, row)
+		}
+	} else {
+		selected_id = -1
+		clear_detail(detail_ptr)
+	}
 }
 
 activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
@@ -162,9 +187,18 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 
 	list_box := cast(^gtk.ListBox)gtk.list_box_new()
 	main_list_box = list_box
-	for r in recipes {
-		gtk.list_box_append(list_box, new_label(r.title))
-	}
+	search_entry = gtk.search_entry_new()
+	gtk.search_entry_set_placeholder_text(
+		cast(^gtk.SearchEntry)search_entry,
+		"Type to filter recipes…",
+	)
+	gobj.signal_connect(
+		search_entry,
+		"search-changed",
+		cast(gobj.Callback)on_search_changed,
+		nil,
+	)
+	rebuild_list()
 	list_scrolled := gtk.scrolled_window_new()
 	gtk.scrolled_window_set_child(
 		cast(^gtk.ScrolledWindow)list_scrolled,
@@ -232,6 +266,7 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 		window,
 	)
 	left_box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
+	gtk.box_append(left_box, search_entry)
 	gtk.box_append(left_box, add_button)
 	gtk.box_append(left_box, list_scrolled)
 
@@ -248,8 +283,8 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	)
 	if db_error_msg != "" {
 		set_text(d.title, db_error_msg)
-	} else if len(recipes) > 0 {
-		show_recipe(d, recipes[0])
+	} else if len(filtered) > 0 {
+		show_recipe(d, recipes[filtered[0]])
 		gtk.list_box_select_row(
 			list_box,
 			gtk.list_box_get_row_at_index(list_box, 0),
@@ -299,7 +334,34 @@ set_entry_text :: proc(w: ^gtk.Widget, s: string) {
 	gtk.editable_set_text(cast(^gtk.Editable)w, cs)
 }
 
+// title_matches_search is the list filter, mirroring
+// cpp-gtk4's search.h: case-insensitive substring match
+// on the recipe TITLE only; an empty query matches
+// everything; the query is NOT trimmed.
+title_matches_search :: proc(title, query: string) -> bool {
+	if query == "" {
+		return true
+	}
+	title_lower := strings.to_lower(title)
+	defer delete(title_lower)
+	query_lower := strings.to_lower(query)
+	defer delete(query_lower)
+	return strings.contains(title_lower, query_lower)
+}
+
+apply_filter :: proc() {
+	clear(&filtered)
+	query := entry_text(search_entry)
+	defer delete(query)
+	for r, i in recipes {
+		if title_matches_search(r.title, query) {
+			append(&filtered, i)
+		}
+	}
+}
+
 rebuild_list :: proc() {
+	apply_filter()
 	for {
 		child := gtk.widget_get_first_child(cast(^gtk.Widget)main_list_box)
 		if child == nil {
@@ -307,8 +369,8 @@ rebuild_list :: proc() {
 		}
 		gtk.list_box_remove(main_list_box, child)
 	}
-	for r in recipes {
-		gtk.list_box_append(main_list_box, new_label(r.title))
+	for idx in filtered {
+		gtk.list_box_append(main_list_box, new_label(recipes[idx].title))
 	}
 }
 
@@ -460,11 +522,11 @@ on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	}
 	recipes = loaded
 	rebuild_list()
-	for r, i in recipes {
-		if r.id == saved_id {
+	for idx, p in filtered {
+		if recipes[idx].id == saved_id {
 			gtk.list_box_select_row(
 				main_list_box,
-				gtk.list_box_get_row_at_index(main_list_box, i32(i)),
+				gtk.list_box_get_row_at_index(main_list_box, i32(p)),
 			)
 			break
 		}
@@ -703,9 +765,9 @@ on_delete_confirm :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 	}
 	recipes = loaded
 	rebuild_list()
-	if len(recipes) > 0 {
-		selected_id = recipes[0].id
-		show_recipe(detail_ptr, recipes[0])
+	if len(filtered) > 0 {
+		selected_id = recipes[filtered[0]].id
+		show_recipe(detail_ptr, recipes[filtered[0]])
 		row := gtk.list_box_get_row_at_index(main_list_box, 0)
 		if row != nil {
 			gtk.list_box_select_row(main_list_box, row)

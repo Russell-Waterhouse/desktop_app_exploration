@@ -91,6 +91,12 @@ detail pane opens a confirmation dialog naming the
 recipe; confirming deletes it and its children, reloads,
 and selects the first remaining recipe (or clears the
 detail pane when none remain).
+Search: done — a search entry at the top of the left
+pane filters the list by title (case-insensitive
+substring, empty query shows all, query not trimmed);
+the list holds indices into the recipe array so row
+selection, add/edit/delete reselection, and the empty
+result (cleared detail) all follow the filter.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.

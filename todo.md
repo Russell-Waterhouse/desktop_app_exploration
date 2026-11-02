@@ -95,7 +95,7 @@ has been tested on Fedora yet.
 - [X] add recipe
 - [X] edit recipe
 - [X] delete recipe
-- [ ] recipe list: title, search by title
+- [X] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
@@ -132,7 +132,7 @@ has been tested on Fedora yet.
 - [X] add recipe
 - [X] edit recipe
 - [X] delete recipe
-- [ ] recipe list: title, search by title
+- [X] recipe list: title, search by title
 - [ ] recipe detail: description, servings, ingredients, numbered steps, notes
 - [ ] display images (list thumbnails and detail photo)
 - [ ] import image from a file and store image files on disk
