@@ -14,7 +14,7 @@ This repo is for choosing a desktop application development stack. See `plan.md`
 
 - Rust:
   - Egui / Eframe
-  - Iced
+  - Iced — no longer under consideration (Nov 2026): Iced renders complex text correctly, but its `text()` widget has no selection support, and the read-only `text_editor` route that makes text selectable paints the selection highlight in the wrong place for RTL Arabic. The selection content and Ctrl+C copy are correct, but the highlight band renders over the empty left side of the field instead of over the glyphs (measured in the test app: band at x 306–558 while the Arabic glyphs sit at x ~609–939). The cause is inside iced: iced_graphics 0.14 computes selection rectangles with its own `highlight_line`, which sums glyph widths from the start of the line and assumes the line starts at x=0 — an LTR assumption that breaks for right-aligned RTL lines. There is no documented fix in iced: cosmic-text fixed its own `highlight()` in 0.19.0 (PR #491), but iced 0.14 pins cosmic-text 0.15.0 and does not use that function, and no iced issue, PR, or changelog entry addresses it. Fixing it would mean patching iced's internals or building a custom selectable widget. Running into a problem like this in a small spike means the stack is not mature enough yet.
 - C / C++:
   - Dear ImGui
   - GTK4
