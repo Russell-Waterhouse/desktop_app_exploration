@@ -56,6 +56,13 @@ equivalent of `install_ubuntu.sh`):
 Hello world, open window: done and verified here — the app
 opens a 900x600 window titled "Recipe Manager" containing a
 "Hello, GTK4!" label, confirmed by screenshot under Xvfb.
+Recipe list and detail view, hard-coded data: done and
+verified here — a GtkListBox of the same 3 recipes the other
+stacks start with (Banana Bread, Tomato Basil Pasta, Chicken
+Stir Fry) on the left, detail pane (title, description,
+servings, ingredients, numbered steps, notes) on the right,
+confirmed by screenshot under Xvfb including a click on the
+second row switching the detail to Tomato Basil Pasta.
 Upstream notes Linux and Windows support for the bindings;
 only Linux has been verified here.
 

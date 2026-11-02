@@ -90,7 +90,7 @@ has been tested on Fedora yet.
 - [X] install script for Ubuntu
 - [X] install script for Fedora
 - [X] hello world, open window
-- [ ] recipe view with hard-coded data
+- [X] recipe view with hard-coded data
 - [ ] recipe view with SQLite integration
 - [ ] add recipe
 - [ ] edit recipe
@@ -127,7 +127,7 @@ has been tested on Fedora yet.
 - [X] install script for Ubuntu
 - [X] install script for Fedora
 - [X] hello world, open window
-- [ ] recipe view with hard-coded data
+- [X] recipe view with hard-coded data
 - [ ] recipe view with SQLite integration
 - [ ] add recipe
 - [ ] edit recipe
