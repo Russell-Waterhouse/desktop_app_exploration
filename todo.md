@@ -71,19 +71,10 @@ has been tested on Fedora yet.
 - [X] raw-file export: recipes as JSON, collection
 - [X] text encoding import: detect UTF-8 (with and without BOM), UTF-16LE/BE (with BOM), Windows-1252, and Shift_JIS in imported recipe JSON, parse it, and store equivalent UTF-8 in SQLite
 - [X] display complex text: Arabic, emoji, Devanagari, and Simplified Chinese in recipe titles and descriptions
-- [ ] text input in add/edit forms: IME input, multiline editing, selection, undo/redo, and validation
-- [ ] CPU profiling
-- [ ] memory profiling
-- [ ] compile time profiling
 - [X] unit tests for recipe data, search, and encoding logic
   - [X] unit tests for recipe data
   - [X] unit tests for search
   - [X] unit tests for encoding logic
-- [ ] UI tests for recipe list/detail, add, edit, and delete
-  - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
-- [ ] Windows build
-- [ ] macOS build
-- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## C/C++ GTK4 (`cpp-gtk4/`)
 
