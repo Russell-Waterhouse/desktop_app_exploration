@@ -3,11 +3,14 @@ package main
 // Seed data for the SQLite database (db.odin), matching the
 // seed data used by the Rust version (rust-egui/src/seed.rs):
 // the same three recipes, in the same order, with the same
-// ingredients and steps. At runtime the app loads from
-// recipes.db, not from here; this is only inserted once, when
-// the recipes table is empty. id is left at 0 (the database
-// assigns it) and image_path at "" (inserted as NULL, until
-// the image step sets it).
+// ingredients and steps, plus the four complex-text probe
+// recipes (Arabic, Devanagari, Simplified Chinese, emoji),
+// which Pango renders with zero font configuration and
+// which the detail pane shows as selectable text. At runtime
+// the app loads from recipes.db, not from here; this is only
+// inserted once, when the recipes table is empty. id is left
+// at 0 (the database assigns it) and image_path at ""
+// (inserted as NULL, until the image step sets it).
 //
 // Note on layout: the ingredient and step arrays are package-level
 // globals, and each recipe holds a slice into its own arrays.
@@ -85,7 +88,7 @@ stirfry_steps := [4]string{
 	"Cook for 2 more minutes, stirring, until the sauce coats everything.",
 }
 
-RECIPES := [3]Recipe{
+RECIPES := [7]Recipe{
 	{
 		title = "Banana Bread",
 		description = "A classic loaf, best with very ripe bananas.",
@@ -110,4 +113,76 @@ RECIPES := [3]Recipe{
 		steps = stirfry_steps[:],
 		notes = "Serve over rice.",
 	},
+	{
+		title = "كبسة الدجاج",
+		description = "طبق أرز تقليدي مع الدجاج والبهارات المشكلة.",
+		servings = 4,
+		ingredients = kabsa_ingredients[:],
+		steps = kabsa_steps[:],
+		notes = "تُقدم مع السلطة.",
+	},
+	{
+		title = "पालक पनीर",
+		description = "पालक और पनीर से बना एक लोकप्रिय उत्तर भारतीय व्यंजन।",
+		servings = 4,
+		ingredients = palak_ingredients[:],
+		steps = palak_steps[:],
+		notes = "रोटी या चावल के साथ परोसें।",
+	},
+	{
+		title = "番茄炒蛋",
+		description = "一道简单快捷的家常菜，酸甜可口，老少皆宜。",
+		servings = 2,
+		ingredients = tomato_egg_ingredients[:],
+		steps = tomato_egg_steps[:],
+		notes = "配米饭食用最佳。",
+	},
+	{
+		title = "🥞 Blueberry Pancakes 🫐",
+		description = "Fluffy pancakes with 🫐 blueberries, served with 🍁 maple syrup.",
+		servings = 4,
+		ingredients = pancake_ingredients[:],
+		steps = pancake_steps[:],
+		notes = "Extra 🫐 on top never hurts.",
+	},
+}
+
+kabsa_ingredients := [2]Ingredient{
+	{amount = "1", unit = "", name = "دجاج"},
+	{amount = "2", unit = "كوب", name = "أرز بسمتي"},
+}
+
+kabsa_steps := [2]string{
+	"يُتبل الدجاج بالبهارات ويُحمر.",
+	"يُضاف الأرز والمرق ويُطهى حتى ينضج.",
+}
+
+palak_ingredients := [2]Ingredient{
+	{amount = "500", unit = "ग्राम", name = "पालक"},
+	{amount = "200", unit = "ग्राम", name = "पनीर"},
+}
+
+palak_steps := [2]string{
+	"पालक को उबालकर पीस लें।",
+	"पनीर डालकर धीमी आंच पर पकाएं।",
+}
+
+tomato_egg_ingredients := [2]Ingredient{
+	{amount = "2", unit = "个", name = "番茄"},
+	{amount = "3", unit = "个", name = "鸡蛋"},
+}
+
+tomato_egg_steps := [2]string{
+	"鸡蛋打散，入锅炒熟盛出。",
+	"番茄炒软后加入鸡蛋，调味出锅。",
+}
+
+pancake_ingredients := [2]Ingredient{
+	{amount = "2", unit = "cups", name = "flour"},
+	{amount = "1", unit = "cup", name = "🫐 blueberries"},
+}
+
+pancake_steps := [2]string{
+	"Mix the batter and fold in the 🫐 blueberries.",
+	"Cook on a hot griddle until golden, then serve with 🍁 syrup.",
 }

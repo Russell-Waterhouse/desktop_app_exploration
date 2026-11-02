@@ -1,0 +1,782 @@
+package main
+
+import "core:fmt"
+import "core:net"
+import "core:os"
+import "core:strings"
+import "core:testing"
+import "core:thread"
+
+// Network JSON import tests (src/json_import.odin): parsing in
+// all accepted shapes, defaults, and error cases, plus fetching
+// from a local one-shot server. Parsing mirrors the Rust
+// version's json_import tests, including its fixture-shaped
+// single recipe below. Successful parses are freed with
+// free_imported_recipes; error strings are heap allocations
+// that these tests leave (like the DB layer's cstring leaks
+// the existing tests already log — leaks are logged, not
+// failures).
+
+TEST_SINGLE :: `{
+	"title": "Mushroom Risotto",
+	"description": "Creamy rice.",
+	"servings": 4,
+	"ingredients": [{"amount": "1", "unit": "lb", "name": "mushrooms"}],
+	"steps": ["Cook it."]
+}`
+
+@(test)
+test_json_import_parse_single_recipe_object :: proc(t: ^testing.T) {
+	recipes, err := parse_recipes(TEST_SINGLE)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) != 1 {
+		return
+	}
+	testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	testing.expect_value(t, recipes[0].description, "Creamy rice.")
+	testing.expect_value(t, recipes[0].servings, 4)
+	testing.expect_value(t, len(recipes[0].ingredients), 1)
+	if len(recipes[0].ingredients) == 1 {
+		testing.expect_value(t, recipes[0].ingredients[0].name, "mushrooms")
+		testing.expect_value(t, recipes[0].ingredients[0].amount, "1")
+		testing.expect_value(t, recipes[0].ingredients[0].unit, "lb")
+	}
+	testing.expect_value(t, len(recipes[0].steps), 1)
+	if len(recipes[0].steps) == 1 {
+		testing.expect_value(t, recipes[0].steps[0], "Cook it.")
+	}
+}
+
+@(test)
+test_json_import_parse_bare_array :: proc(t: ^testing.T) {
+	doc := fmt.aprintf("[%s, %s]", TEST_SINGLE, TEST_SINGLE)
+	defer delete(doc)
+	recipes, err := parse_recipes(doc)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 2)
+}
+
+// NOTE: JSON documents in these tests are built with
+// strings.concatenate, never fmt.aprintf with a format string
+// containing braces: Odin's fmt interprets `{` in a format
+// string as the start of a directive, so aprintf(`{"recipes":
+// [%s]}`, ...) silently produces garbage (the opening brace
+// eats into `%!(MISSING CLOSE BRACE)`) and the parse then
+// fails with Unexpected_Token. Concatenation has no such trap.
+@(test)
+test_json_import_parse_wrapped_collection :: proc(t: ^testing.T) {
+	doc := strings.concatenate({`{"recipes": [`, TEST_SINGLE, `]}`})
+	defer delete(doc)
+	recipes, err := parse_recipes(doc)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+@(test)
+test_json_import_parse_minimal_recipe_uses_defaults :: proc(t: ^testing.T) {
+	recipes, err := parse_recipes(`{"title": "Toast"}`)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) != 1 {
+		return
+	}
+	testing.expect_value(t, recipes[0].title, "Toast")
+	testing.expect_value(t, recipes[0].description, "")
+	testing.expect_value(t, recipes[0].servings, 0)
+	testing.expect_value(t, recipes[0].image_path, "")
+	testing.expect_value(t, len(recipes[0].ingredients), 0)
+	testing.expect_value(t, len(recipes[0].steps), 0)
+	testing.expect_value(t, recipes[0].notes, "")
+}
+
+@(test)
+test_json_import_parse_null_image_path_is_empty :: proc(t: ^testing.T) {
+	recipes, err := parse_recipes(`{"title": "Toast", "image_path": null}`)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].image_path, "")
+	}
+}
+
+@(test)
+test_json_import_parse_empty_collection :: proc(t: ^testing.T) {
+	recipes, err := parse_recipes(`{"recipes": []}`)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 0)
+}
+
+@(test)
+test_json_import_parse_invalid_json_is_an_error :: proc(t: ^testing.T) {
+	_, err := parse_recipes("{ this is not json")
+	testing.expect(t, err != "", "invalid JSON must be an error")
+}
+
+@(test)
+test_json_import_parse_object_without_recipes_or_title_is_an_error :: proc(t: ^testing.T) {
+	_, err := parse_recipes(`{"nope": 1}`)
+	testing.expect(t, err != "", "an object with neither recipes nor title must be an error")
+}
+
+@(test)
+test_json_import_parse_recipe_without_title_is_an_error :: proc(t: ^testing.T) {
+	_, err := parse_recipes(`{"description": "No title here."}`)
+	testing.expect(t, err != "", "a recipe without a title must be an error")
+	_, err = parse_recipes(`{"title": "   "}`)
+	testing.expect(t, err != "", "a recipe with a blank title must be an error")
+}
+
+@(test)
+test_json_import_parse_recipes_field_must_be_an_array :: proc(t: ^testing.T) {
+	_, err := parse_recipes(`{"recipes": {"title": "Toast"}}`)
+	testing.expect(t, err != "", "a non-array recipes field must be an error")
+}
+
+@(test)
+test_json_import_parse_ingredient_defaults :: proc(t: ^testing.T) {
+	recipes, err := parse_recipes(`{"title": "Toast", "ingredients": [{"name": "bread"}]}`)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 && len(recipes[0].ingredients) == 1 {
+		testing.expect_value(t, recipes[0].ingredients[0].name, "bread")
+		testing.expect_value(t, recipes[0].ingredients[0].amount, "")
+		testing.expect_value(t, recipes[0].ingredients[0].unit, "")
+	}
+}
+
+@(test)
+test_json_import_url_parsing_defaults_and_https_rejection :: proc(t: ^testing.T) {
+	url, err := parse_http_url("http://localhost:8000/recipes.json")
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, url.host, "localhost")
+	testing.expect_value(t, url.port, 8000)
+	testing.expect_value(t, url.path, "/recipes.json")
+	url, err = parse_http_url("http://example.com")
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, url.port, 80)
+	testing.expect_value(t, url.path, "/")
+	_, err = parse_http_url("https://example.com/recipes.json")
+	testing.expect(t, err != "", "https must be rejected")
+	_, err = parse_http_url("http:///recipes.json")
+	testing.expect(t, err != "", "a missing host must be an error")
+}
+
+@(test)
+test_json_import_chunked_body_decodes :: proc(t: ^testing.T) {
+	chunked_input := "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+	decoded, err := decode_chunked(transmute([]byte)chunked_input)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer delete(decoded)
+	testing.expect_value(t, string(decoded), "hello world")
+}
+
+// --- One-shot local server for the fetch tests -----------------------
+// The listener is bound by the test thread on the loopback
+// interface with port 0, and bound_endpoint reports the port
+// the OS picked; the listener is then handed to a server
+// thread that accepts exactly one connection (two, for the
+// redirect test), reads the request, and writes the response.
+// The test thread fetches, then joins the server thread, so no
+// server thread outlives its test.
+
+Serve_Job :: struct {
+	listener:        net.TCP_Socket,
+	response:        []byte,
+	second_response: []byte,
+	serve_second:    bool,
+}
+
+serve_one :: proc(listener: net.TCP_Socket, response: []byte) {
+	client, _, accept_err := net.accept_tcp(listener)
+	if accept_err != .None {
+		return
+	}
+	defer net.close(client)
+	// Read (and ignore) the request: the client sends one
+	// small request, so a single recv is enough here.
+	request_buf: [4096]byte
+	net.recv_tcp(client, request_buf[:])
+	// Send the whole response, in case one send does not take it.
+	sent := 0
+	for sent < len(response) {
+		n, send_err := net.send_tcp(client, response[sent:])
+		if send_err != .None || n <= 0 {
+			return
+		}
+		sent += n
+	}
+}
+
+serve_once_job :: proc(job: ^Serve_Job) {
+	serve_one(job.listener, job.response)
+	if job.serve_second {
+		serve_one(job.listener, job.second_response)
+	}
+}
+
+listen_on_test_port :: proc(t: ^testing.T) -> (net.TCP_Socket, int) {
+	// listen_tcp returns a Network_Error union, so failure is
+	// a non-nil union, not a .None enum value.
+	socket, err := net.listen_tcp(net.Endpoint{address = net.IP4_Loopback, port = 0})
+	if err != nil {
+		testing.fail(t)
+		return {}, 0
+	}
+	bound, berr := net.bound_endpoint(socket)
+	if berr != .None {
+		net.close(socket)
+		testing.fail(t)
+		return {}, 0
+	}
+	return socket, bound.port
+}
+
+@(test)
+test_json_import_fetch_from_a_local_server :: proc(t: ^testing.T) {
+	listener, port := listen_on_test_port(t)
+	if port == 0 {
+		return
+	}
+	defer net.close(listener)
+	body := strings.concatenate({`{"recipes": [`, TEST_SINGLE, `]}`})
+	defer delete(body)
+	response := fmt.aprintf(
+		"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		len(body), body,
+	)
+	defer delete(response)
+	job := new(Serve_Job)
+	job.listener = listener
+	job.response = transmute([]byte)response
+	server := thread.create_and_start_with_poly_data(job, serve_once_job)
+	recipes, err := fetch_and_parse(fmt.tprintf("http://127.0.0.1:%d/recipes.json", port))
+	thread.join(server)
+	thread.destroy(server)
+	free(job)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+@(test)
+test_json_import_fetch_follows_a_redirect :: proc(t: ^testing.T) {
+	listener, port := listen_on_test_port(t)
+	if port == 0 {
+		return
+	}
+	defer net.close(listener)
+	body := strings.concatenate({`{"recipes": [`, TEST_SINGLE, `]}`})
+	defer delete(body)
+	second := fmt.aprintf(
+		"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		len(body), body,
+	)
+	defer delete(second)
+	first := "HTTP/1.1 302 Found\r\nLocation: /recipes.json\r\nContent-Length: 0\r\n\r\n"
+	job := new(Serve_Job)
+	job.listener = listener
+	job.response = transmute([]byte)first
+	job.second_response = transmute([]byte)second
+	job.serve_second = true
+	server := thread.create_and_start_with_poly_data(job, serve_once_job)
+	recipes, err := fetch_and_parse(fmt.tprintf("http://127.0.0.1:%d/old.json", port))
+	thread.join(server)
+	thread.destroy(server)
+	free(job)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+@(test)
+test_json_import_fetch_non_200_is_an_error :: proc(t: ^testing.T) {
+	listener, port := listen_on_test_port(t)
+	if port == 0 {
+		return
+	}
+	defer net.close(listener)
+	response := "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot found"
+	job := new(Serve_Job)
+	job.listener = listener
+	job.response = transmute([]byte)response
+	server := thread.create_and_start_with_poly_data(job, serve_once_job)
+	_, err := fetch_url(fmt.tprintf("http://127.0.0.1:%d/missing.json", port))
+	thread.join(server)
+	thread.destroy(server)
+	free(job)
+	testing.expect(t, err != "", "a 404 must be an error")
+	// The error names the status, like the Rust version's.
+	testing.expect(t, strings.contains(err, "404"), fmt.tprintf("error was: %s", err))
+}
+
+// --- Raw-file import tests (src/json_import.odin) ---------------------
+// Mirrors rust-egui's five import_from_file tests: the file is
+// read from disk and parsed with the same parser the URL
+// importer uses, so the path itself is exercised end to end.
+// Temp files live in /tmp like the db tests' throwaway
+// databases, and each test removes its file when it finishes.
+
+write_import_temp_file :: proc(t: ^testing.T, tag: string, contents: string) -> string {
+	path := strings.concatenate({"/tmp/odin-gtk-test-import-", tag, ".json"})
+	write_err := os.write_entire_file(path, contents)
+	testing.expect(t, write_err == nil, "could not write temp file")
+	return path
+}
+
+@(test)
+test_json_import_file_single_recipe :: proc(t: ^testing.T) {
+	path := write_import_temp_file(t, "single", TEST_SINGLE)
+	defer delete(path)
+	defer os.remove(path)
+	recipes, err := import_from_file(path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+@(test)
+test_json_import_file_collection :: proc(t: ^testing.T) {
+	doc := strings.concatenate({`{"recipes": [`, TEST_SINGLE, `, `, TEST_SINGLE, `]}`})
+	defer delete(doc)
+	path := write_import_temp_file(t, "collection", doc)
+	defer delete(path)
+	defer os.remove(path)
+	recipes, err := import_from_file(path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 2)
+}
+
+@(test)
+test_json_import_file_bare_array_and_empty :: proc(t: ^testing.T) {
+	doc := strings.concatenate({`[`, TEST_SINGLE, `]`})
+	defer delete(doc)
+	path := write_import_temp_file(t, "array", doc)
+	defer delete(path)
+	defer os.remove(path)
+	recipes, err := import_from_file(path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+
+	empty_path := write_import_temp_file(t, "empty", `{"recipes": []}`)
+	defer delete(empty_path)
+	defer os.remove(empty_path)
+	empty_recipes, empty_err := import_from_file(empty_path)
+	testing.expect(t, empty_err == "", empty_err)
+	if empty_err != "" {
+		return
+	}
+	defer free_imported_recipes(empty_recipes)
+	testing.expect_value(t, len(empty_recipes), 0)
+}
+
+@(test)
+test_json_import_file_invalid_and_missing :: proc(t: ^testing.T) {
+	path := write_import_temp_file(t, "invalid", "{ this is not json")
+	defer delete(path)
+	defer os.remove(path)
+	_, err := import_from_file(path)
+	testing.expect(t, err != "", "invalid JSON must be an error")
+	testing.expect(t, strings.contains(err, "Could not parse recipe JSON"), err)
+
+	missing := "/tmp/odin-gtk-test-import-missing.json"
+	os.remove(missing)
+	_, err = import_from_file(missing)
+	testing.expect(t, err != "", "a missing file must be an error")
+	testing.expect(t, strings.contains(err, "Could not read file"), err)
+}
+
+@(test)
+test_json_import_file_undecodable_is_a_read_error :: proc(t: ^testing.T) {
+	// Truncated UTF-16LE: the BOM pins UTF-16LE, the odd
+	// length fails strict conversion, and the file import
+	// wraps it as a read failure naming the encoding.
+	// (Under the old UTF-8-only importer this was the
+	// non-UTF-8 read-error test; undecodable input is now
+	// the decode error below, not a UTF-8 validity error.)
+	path := strings.concatenate({"/tmp/odin-gtk-test-import-", "truncutf16", ".json"})
+	write_err := os.write_entire_file(path, []byte{0xff, 0xfe, 'A'})
+	testing.expect(t, write_err == nil, "could not write temp file")
+	defer delete(path)
+	defer os.remove(path)
+	_, err := import_from_file(path)
+	testing.expect(t, err != "", "a truncated UTF-16LE file must be an error")
+	testing.expect(t, strings.contains(err, "Could not read file"), err)
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-16LE"), err)
+
+	// A lone 0xFF byte is genuinely ambiguous between
+	// single-byte encodings (ICU guesses ISO-8859-2), so it
+	// imports rather than erroring; only the title's first
+	// byte is asserted, like the C++ stacks' version.
+	doc := make([dynamic]byte)
+	append(&doc, `{"title": "A`)
+	append(&doc, 0xff)
+	append(&doc, `"}`)
+	lone_path := strings.concatenate({"/tmp/odin-gtk-test-import-", "loneff", ".json"})
+	write_err = os.write_entire_file(lone_path, doc[:])
+	testing.expect(t, write_err == nil, "could not write temp file")
+	defer delete(lone_path)
+	defer os.remove(lone_path)
+	recipes, lerr := import_from_file(lone_path)
+	testing.expect(t, lerr == "", lerr)
+	if lerr != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect(t, len(recipes[0].title) > 0 && recipes[0].title[0] == 'A', "lone-0xFF title should start with A")
+	}
+}
+
+// The shared test-data fixtures, read from disk. odin test
+// runs with the working directory of the invocation: the stack
+// directory (odin-microui/) when run as `odin test src` (the
+// README command), the repo root, or the src directory, so
+// all three layouts are tried.
+find_test_data_dir :: proc(t: ^testing.T) -> string {
+	candidates := []string{"../test-data/", "test-data/", "../../test-data/"}
+	for candidate in candidates {
+		probe := strings.concatenate({candidate, "recipe-single.json"})
+		defer delete(probe)
+		if os.exists(probe) {
+			return candidate
+		}
+	}
+	testing.fail(t)
+	return ""
+}
+
+@(test)
+test_json_import_file_shared_fixtures :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	if dir == "" {
+		return
+	}
+	fixture :: proc(dir, name: string) -> string {
+		return strings.concatenate({dir, name})
+	}
+
+	single_path := fixture(dir, "recipe-single.json")
+	defer delete(single_path)
+	recipes, err := import_from_file(single_path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 1)
+	if len(recipes) == 1 {
+		testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+	}
+
+	array_path := fixture(dir, "recipes-array.json")
+	defer delete(array_path)
+	recipes, err = import_from_file(array_path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 2)
+	if len(recipes) == 2 {
+		testing.expect_value(t, recipes[0].title, "Pancakes")
+		testing.expect_value(t, recipes[1].title, "Greek Salad")
+	}
+
+	collection_path := fixture(dir, "recipes.json")
+	defer delete(collection_path)
+	recipes, err = import_from_file(collection_path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 3)
+	if len(recipes) == 3 {
+		testing.expect_value(t, recipes[0].title, "Fried Chicken")
+		testing.expect_value(t, recipes[1].title, "Lasagna")
+		testing.expect_value(t, recipes[2].title, "Butter Tarts")
+	}
+
+	empty_fixture_path := fixture(dir, "recipes-empty.json")
+	defer delete(empty_fixture_path)
+	recipes, err = import_from_file(empty_fixture_path)
+	testing.expect(t, err == "", err)
+	if err != "" {
+		return
+	}
+	defer free_imported_recipes(recipes)
+	testing.expect_value(t, len(recipes), 0)
+
+	invalid_path := fixture(dir, "invalid.json")
+	defer delete(invalid_path)
+	_, err = import_from_file(invalid_path)
+	testing.expect(t, err != "", "invalid.json must be an error")
+	testing.expect(t, strings.contains(err, "Could not parse recipe JSON"), err)
+}
+
+// The file-import worker branch: the same thread procedure
+// main starts for a file job must read and parse the file,
+// so a file import through the GUI's worker-thread + poll
+// path works, not just the direct import_from_file call.
+@(test)
+test_json_import_file_worker_thread :: proc(t: ^testing.T) {
+	path := write_import_temp_file(t, "worker", TEST_SINGLE)
+	defer delete(path)
+	defer os.remove(path)
+	job := new(Import_Job)
+	defer free(job)
+	job.path = strings.clone(path)
+	defer delete(job.path)
+	worker := thread.create_and_start_with_poly_data(job, import_job_proc)
+	thread.join(worker)
+	thread.destroy(worker)
+	testing.expect(t, job.err == "", job.err)
+	if job.err != "" {
+		return
+	}
+	defer free_imported_recipes(job.recipes)
+	testing.expect_value(t, len(job.recipes), 1)
+	if len(job.recipes) == 1 {
+		testing.expect_value(t, job.recipes[0].title, "Mushroom Risotto")
+	}
+}
+
+// ---- Text-encoding import (ICU) ----
+// Mirrors the Rust and C++ stacks' encoding tests: BOM
+// handling, strict conversion plus a Shift_JIS round-trip,
+// all five shared encoding fixtures from disk, and two
+// fixtures served over HTTP.
+
+encoding_test_bytes_ascii_as_utf16 :: proc(text: string, big_endian: bool) -> []byte {
+	out := make([dynamic]byte)
+	if big_endian {
+		append(&out, 0xfe, 0xff)
+		for b in transmute([]byte)text {
+			append(&out, 0, b)
+		}
+	} else {
+		append(&out, 0xff, 0xfe)
+		for b in transmute([]byte)text {
+			append(&out, b, 0)
+		}
+	}
+	return out[:]
+}
+
+@(test)
+test_json_import_decode_bom_handling :: proc(t: ^testing.T) {
+	// UTF-8 BOM is stripped.
+	utf8_bom := make([dynamic]byte)
+	append(&utf8_bom, 0xef, 0xbb, 0xbf)
+	append(&utf8_bom, `{"title": "Toast"}`)
+	text, err := decode_import_bytes(utf8_bom[:])
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// UTF-16LE/BE BOMs are stripped and the body decoded.
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, false))
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+	text, err = decode_import_bytes(encoding_test_bytes_ascii_as_utf16(`{"title": "Toast"}`, true))
+	testing.expect(t, err == "", err)
+	testing.expect_value(t, text, `{"title": "Toast"}`)
+
+	// Empty input decodes to empty, and a lone BOM too.
+	text, err = decode_import_bytes([]byte{})
+	testing.expect(t, err == "" && text == "", "empty input should decode to empty")
+	text, err = decode_import_bytes([]byte{0xff, 0xfe})
+	testing.expect(t, err == "" && text == "", "a lone BOM should decode to empty")
+}
+
+@(test)
+test_json_import_decode_strict_conversion_and_shift_jis :: proc(t: ^testing.T) {
+	// BOM-pinned UTF-8 with an invalid sequence: strict
+	// conversion must fail, never substitute U+FFFD.
+	bad_utf8 := make([dynamic]byte)
+	append(&bad_utf8, 0xef, 0xbb, 0xbf)
+	append(&bad_utf8, `{"title": "A`)
+	append(&bad_utf8, 0xc3, 0x28)
+	append(&bad_utf8, `"}`)
+	_, err := decode_import_bytes(bad_utf8[:])
+	testing.expect(t, err != "", "invalid UTF-8 must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-8"), err)
+
+	// Truncated UTF-16LE (BOM + one byte): odd length fails.
+	_, err = decode_import_bytes([]byte{0xff, 0xfe, 'A'})
+	testing.expect(t, err != "", "odd-length UTF-16LE must be a decode error")
+	testing.expect(t, strings.contains(err, "could not be decoded"), err)
+	testing.expect(t, strings.contains(err, "UTF-16LE"), err)
+
+	// Shift_JIS round-trip through the strict converter with
+	// an explicit name: これはテストです。
+	sjis := []byte{0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67, 0x82, 0xc5, 0x82, 0xb7, 0x81, 0x42}
+	sjis_text, sjis_err := icu_convert_strict(sjis, "Shift_JIS")
+	testing.expect(t, sjis_err == "", sjis_err)
+	testing.expect_value(t, sjis_text, "これはテストです。")
+
+	// The same lead byte alone must fail strictly.
+	_, err = icu_convert_strict([]byte{0x82}, "Shift_JIS")
+	testing.expect(t, err != "", "a lone Shift_JIS lead byte must be a decode error")
+}
+
+@(test)
+test_json_import_file_encoding_fixtures :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	if dir == "" {
+		return
+	}
+	enc := strings.concatenate({dir, "encoding_test_data/"})
+	defer delete(enc)
+	names := []string{"recipe-utf8.json", "recipe-utf8-bom.json", "recipe-utf16le-bom.json", "recipe-windows-1252.json", "recipe-latin-1.json"}
+	for name in names {
+		path := strings.concatenate({enc, name})
+		defer delete(path)
+		recipes, err := import_from_file(path)
+		testing.expect(t, err == "", err)
+		if err != "" {
+			continue
+		}
+		defer free_imported_recipes(recipes)
+		testing.expect_value(t, len(recipes), 1)
+		if len(recipes) == 1 {
+			testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+			testing.expect_value(t, recipes[0].servings, 4)
+			testing.expect_value(t, len(recipes[0].ingredients), 6)
+			testing.expect_value(t, len(recipes[0].steps), 5)
+		}
+	}
+	// Windows-1252 keeps its typographic characters; Latin-1
+	// has the ASCII fallbacks in exactly those spots.
+	w1252_path := strings.concatenate({enc, "recipe-windows-1252.json"})
+	defer delete(w1252_path)
+	recipes, err := import_from_file(w1252_path)
+	testing.expect(t, err == "", err)
+	if err == "" {
+		defer free_imported_recipes(recipes)
+		testing.expect(t, strings.contains(recipes[0].description, "—"), "windows-1252 description should keep the em dash")
+		testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "€3"), "windows-1252 ingredient should keep the euro")
+	}
+	latin1_path := strings.concatenate({enc, "recipe-latin-1.json"})
+	defer delete(latin1_path)
+	recipes, err = import_from_file(latin1_path)
+	testing.expect(t, err == "", err)
+	if err == "" {
+		defer free_imported_recipes(recipes)
+		testing.expect(t, strings.contains(recipes[0].description, " - a classic"), "latin-1 description should have the ASCII fallback")
+		testing.expect(t, strings.contains(recipes[0].ingredients[5].name, "EUR 3"), "latin-1 ingredient should have the EUR fallback")
+	}
+}
+
+@(test)
+test_json_import_fetch_encoding_fixtures_from_local_server :: proc(t: ^testing.T) {
+	dir := find_test_data_dir(t)
+	if dir == "" {
+		return
+	}
+	enc := strings.concatenate({dir, "encoding_test_data/"})
+	defer delete(enc)
+	fetch_names := []string{"recipe-windows-1252.json", "recipe-utf16le-bom.json"}
+	for name in fetch_names {
+		path := strings.concatenate({enc, name})
+		defer delete(path)
+		data, rerr := os.read_entire_file(path, context.allocator)
+		testing.expect(t, rerr == nil, "could not read fixture")
+		if rerr != nil {
+			continue
+		}
+		defer delete(data)
+		header := fmt.aprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", len(data))
+		defer delete(header)
+		response := make([dynamic]byte)
+		defer delete(response)
+		append(&response, ..transmute([]byte)header)
+		append(&response, ..data)
+		listener, port := listen_on_test_port(t)
+		if port == 0 {
+			return
+		}
+		defer net.close(listener)
+		job := new(Serve_Job)
+		job.listener = listener
+		job.response = response[:]
+		server := thread.create_and_start_with_poly_data(job, serve_once_job)
+		recipes, err := fetch_and_parse(fmt.tprintf("http://127.0.0.1:%d/recipes.json", port))
+		thread.join(server)
+		thread.destroy(server)
+		free(job)
+		testing.expect(t, err == "", err)
+		if err != "" {
+			continue
+		}
+		defer free_imported_recipes(recipes)
+		testing.expect_value(t, len(recipes), 1)
+		if len(recipes) == 1 {
+			testing.expect_value(t, recipes[0].title, "Mushroom Risotto")
+			testing.expect_value(t, recipes[0].servings, 4)
+		}
+	}
+}

@@ -18,6 +18,9 @@ import "core:fmt"
 import "core:os"
 import "base:runtime"
 import "core:strings"
+import "core:thread"
+import "core:time"
+import glib "../third_party/odin-gtk/glib"
 import gio "../third_party/odin-gtk/glib/gio"
 import gobj "../third_party/odin-gtk/glib/gobject"
 import gtk "../third_party/odin-gtk/gtk"
@@ -53,6 +56,45 @@ selected_id: i64 = -1
 // never shared between two dialogs.
 pending_delete_id: i64 = -1
 
+// Image path shown in the detail pane (aliases the selected
+// recipe's image_path; the widgets live in Detail and the
+// loading state in images.odin).
+detail_image_path: string
+
+// List/detail transition state: the detail pane fades in
+// over 0.25s (ease-out cubic) when the selection changes,
+// like cpp-gtk4's timeout-driven opacity steps.
+detail_box_widget: ^gtk.Widget
+transition_active: bool
+transition_start: time.Time
+
+// Import/export widgets and job state (see the import
+// section below activate). At most one import runs at a
+// time; the buttons are disabled while it does.
+main_window: ^gtk.Widget
+url_entry: ^gtk.Widget
+import_button, import_file_button: ^gtk.Widget
+export_single_button, export_all_button: ^gtk.Widget
+import_spinner_box: ^gtk.Widget
+import_status: ^gtk.Widget
+import_thread: ^thread.Thread
+import_job: ^Import_Job
+
+// File-dialog state: at most one dialog is open at a time;
+// opening another while one is open is ignored, because
+// the callbacks share these package variables.
+dialog_open: bool
+dialog_purpose: Dialog_Purpose
+dialog_dialog: ^gtk.FileDialog
+
+Dialog_Purpose :: enum {
+	None,
+	Choose_Image,
+	Import_File,
+	Export_Single,
+	Export_All,
+}
+
 // Detail holds the widgets the row-selected handler updates.
 // Label widgets are stored as ^Widget (what label_new
 // returns) and cast to ^Label where label_set_text needs one.
@@ -63,6 +105,10 @@ Detail :: struct {
 	title, description, servings, notes: ^gtk.Widget,
 	ingredient_labels: [7]^gtk.Widget,
 	step_labels:       [5]^gtk.Widget,
+	// Image area at the top of the detail pane: the photo
+	// when ready, a spinner row while it decodes, and an
+	// error line when it fails.
+	image_picture, image_spinner_box, image_status: ^gtk.Widget,
 }
 
 // new_label makes a label from a runtime string. gtk_label_new
@@ -76,10 +122,16 @@ new_label :: proc(s: string) -> ^gtk.Widget {
 }
 
 // detail_label makes an empty label for the detail pane,
-// left-aligned like the list rows.
+// left-aligned like the list rows, and selectable: detail
+// text is highlightable to copy, the way a browser <p>
+// is. Row labels deliberately stay unselectable (see the
+// cpp-gtk4 row-click fix): a selectable label inside a
+// listbox row captures the click for cursor placement, so
+// the row never gets selected.
 detail_label :: proc() -> ^gtk.Widget {
 	w := gtk.label_new("")
 	gtk.label_set_xalign(cast(^gtk.Label)w, 0)
+	gtk.label_set_selectable(cast(^gtk.Label)w, true)
 	return w
 }
 
@@ -124,6 +176,8 @@ show_recipe :: proc(d: ^Detail, r: Recipe) {
 	}
 
 	set_text(d.notes, r.notes)
+	set_detail_image(r.image_path)
+	start_detail_transition()
 }
 
 // clear_detail empties the detail pane (used when the
@@ -141,6 +195,26 @@ clear_detail :: proc(d: ^Detail) {
 		gtk.widget_set_visible(label, false)
 	}
 	set_text(d.notes, "")
+	set_detail_image("")
+}
+
+// set_detail_image points the detail image area at a
+// recipe's image (or none) and starts its decode if needed.
+set_detail_image :: proc(path: string) {
+	detail_image_path = path
+	refresh_detail_image()
+	start_image_loads()
+}
+
+// start_detail_transition fades the detail pane in from
+// opacity 0 over 0.25s; the tick callback steps it.
+start_detail_transition :: proc() {
+	if detail_box_widget == nil {
+		return
+	}
+	gtk.widget_set_opacity(detail_box_widget, 0)
+	transition_start = time.now()
+	transition_active = true
 }
 
 on_row_selected :: proc "c" (box: ^gtk.ListBox, row: ^gtk.ListBoxRow, data: rawptr) {
@@ -173,6 +247,290 @@ on_search_changed :: proc "c" (entry: ^gtk.Widget, data: rawptr) {
 		selected_id = -1
 		clear_detail(detail_ptr)
 	}
+}
+
+
+// --- Import/export and the tick callback ---
+
+// set_import_status shows a message (plain) or an error
+// (red, via markup with the text escaped) in the left pane.
+set_import_status :: proc(message, err: string) {
+	if err != "" {
+		cs := strings.clone_to_cstring(err)
+		defer delete(cs)
+		esc := glib.markup_escape_text(cs, -1)
+		defer glib.free(rawptr(esc))
+		escaped, _ := strings.clone_from_cstring(esc)
+		defer delete(escaped)
+		markup := strings.concatenate({"<span foreground=\"red\">", escaped, "</span>"})
+		defer delete(markup)
+		mcs := strings.clone_to_cstring(markup)
+		defer delete(mcs)
+		gtk.label_set_markup(cast(^gtk.Label)import_status, mcs)
+	} else {
+		set_text(import_status, message)
+	}
+}
+
+set_import_running :: proc(running: bool) {
+	gtk.widget_set_sensitive(import_button, b32(!running))
+	gtk.widget_set_sensitive(import_file_button, b32(!running))
+	gtk.widget_set_visible(import_spinner_box, b32(running))
+	if running {
+		set_import_status("Importing…", "")
+	}
+}
+
+// start_import_job starts a URL or file import on a worker
+// thread; the tick callback collects it.
+start_import_job :: proc(url, path: string) {
+	if import_thread != nil {
+		return
+	}
+	job := new(Import_Job)
+	if path != "" {
+		job.path = strings.clone(path)
+	} else {
+		job.url = strings.clone(url)
+	}
+	import_job = job
+	import_thread = thread.create_and_start_with_poly_data(job, import_job_proc)
+	set_import_running(true)
+}
+
+// poll_import collects a finished import job, if any:
+// reload from the database, rebuild, reselect the first
+// imported recipe, and report the result.
+poll_import :: proc() {
+	if import_thread == nil || import_job == nil {
+		return
+	}
+	first_id, message, err, done := collect_import_job(db_handle, &import_thread, &import_job)
+	if !done {
+		return
+	}
+	set_import_running(false)
+	if err != "" {
+		set_import_status("", err)
+		return
+	}
+	loaded, load_err := load_recipes(db_handle)
+	if load_err != "" {
+		set_import_status("", load_err)
+		return
+	}
+	recipes = loaded
+	rebuild_list()
+	if first_id >= 0 {
+		for idx, p in filtered {
+			if recipes[idx].id == first_id {
+				selected_id = first_id
+				show_recipe(detail_ptr, recipes[idx])
+				gtk.list_box_select_row(
+					main_list_box,
+					gtk.list_box_get_row_at_index(main_list_box, i32(p)),
+				)
+				break
+			}
+		}
+	}
+	set_import_status(message, "")
+}
+
+on_import_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = button
+	_ = data
+	start_import_job(entry_text(url_entry), "")
+}
+
+on_import_file_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = button
+	_ = data
+	open_file_dialog(.Import_File, "Import recipes from JSON", cast(^gtk.Window)main_window)
+}
+
+on_export_single_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = button
+	_ = data
+	if selected_id < 0 {
+		set_import_status("", "No recipe selected.")
+		return
+	}
+	open_file_dialog(.Export_Single, "Export recipe as JSON", cast(^gtk.Window)main_window)
+}
+
+on_export_all_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = button
+	_ = data
+	open_file_dialog(.Export_All, "Export all recipes as JSON", cast(^gtk.Window)main_window)
+}
+
+// open_file_dialog opens a GtkFileDialog for one purpose.
+// Save dialogs get an initial name; open dialogs do not
+// filter by extension (the parse step reports a bad file).
+open_file_dialog :: proc(purpose: Dialog_Purpose, title: string, parent: ^gtk.Window) {
+	if dialog_open {
+		return
+	}
+	dialog := gtk.file_dialog_new()
+	cs := strings.clone_to_cstring(title)
+	defer delete(cs)
+	gtk.file_dialog_set_title(dialog, cs)
+	if purpose == .Export_Single || purpose == .Export_All {
+		name := "recipes.json"
+		if purpose == .Export_Single && selected_id >= 0 {
+			for r in recipes {
+				if r.id == selected_id {
+					name = default_file_name(r.title)
+					break
+				}
+			}
+		}
+		ncs := strings.clone_to_cstring(name)
+		defer delete(ncs)
+		gtk.file_dialog_set_initial_name(dialog, ncs)
+	}
+	dialog_open = true
+	dialog_purpose = purpose
+	dialog_dialog = dialog
+	if purpose == .Export_Single || purpose == .Export_All {
+		gtk.file_dialog_save(dialog, parent, nil, on_save_dialog_done, nil)
+	} else {
+		gtk.file_dialog_open(dialog, parent, nil, on_open_dialog_done, nil)
+	}
+}
+
+dialog_path :: proc(res: [^]gio.AsyncResult, save: bool) -> (string, bool) {
+	// Returns (path, cancelled). A dismissed dialog yields
+	// no file; anything else is a real error to report.
+	err: ^glib.Error
+	file: ^gio.File
+	if save {
+		file = gtk.file_dialog_save_finish(dialog_dialog, cast(^gio.AsyncResult)res, &err)
+	} else {
+		file = gtk.file_dialog_open_finish(dialog_dialog, cast(^gio.AsyncResult)res, &err)
+	}
+	if file == nil {
+		if err != nil {
+			// Cancelled (user dismissed) is silent; other
+			// errors surface as a status line.
+			domain := err.domain
+			code := err.code
+			glib.error_free(err)
+			_ = domain
+			_ = code
+		}
+		return "", true
+	}
+	cs := gio.file_get_path(file)
+	if cs == nil {
+		return "", true
+	}
+	s, _ := strings.clone_from_cstring(cs)
+	return s, false
+}
+
+on_open_dialog_done :: proc "c" (source: ^gobj.Object, res: [^]gio.AsyncResult, data: glib.pointer) {
+	context = runtime.default_context()
+	_ = source
+	_ = data
+	dialog_open = false
+	purpose := dialog_purpose
+	dialog_purpose = .None
+	path, cancelled := dialog_path(res, false)
+	if cancelled {
+		return
+	}
+	defer delete(path)
+	if purpose == .Import_File {
+		start_import_job("", path)
+	} else if purpose == .Choose_Image {
+		if f := active_form; f != nil {
+			rel, cerr := copy_image_file(path)
+			if cerr != "" {
+				set_text(f.error_label, cerr)
+				return
+			}
+			f.image_path = rel
+			set_text(f.image_label, filepath_base(rel))
+		}
+	}
+}
+
+on_save_dialog_done :: proc "c" (source: ^gobj.Object, res: [^]gio.AsyncResult, data: glib.pointer) {
+	context = runtime.default_context()
+	_ = source
+	_ = data
+	dialog_open = false
+	purpose := dialog_purpose
+	dialog_purpose = .None
+	path, cancelled := dialog_path(res, true)
+	if cancelled {
+		return
+	}
+	defer delete(path)
+	if purpose == .Export_Single {
+		for r in recipes {
+			if r.id == selected_id {
+				finish_export_status(path, export_single(r), "Exported 1 recipe")
+				return
+			}
+		}
+	} else if purpose == .Export_All {
+		finish_export_status(path, export_collection(recipes), "Exported all recipes")
+	}
+}
+
+// finish_export_status writes an export and reports it in
+// the left-pane status line, reusing json_export's
+// finish_export message bookkeeping.
+finish_export_status :: proc(path, serialized, summary: string) {
+	message, err: string
+	finish_export(&message, &err, path, serialized, summary)
+	defer if message != "" {
+		delete(message)
+	}
+	defer if err != "" {
+		delete(err)
+	}
+	set_import_status(message, err)
+}
+
+// tick_cb runs every ~16ms on the main thread: it steps
+// the detail fade, collects finished image decodes and
+// import jobs. Returning true keeps the timeout alive.
+tick_cb :: proc "c" (data: glib.pointer) -> glib.boolean {
+	context = runtime.default_context()
+	_ = data
+	if transition_active && detail_box_widget != nil {
+		elapsed := time.since(transition_start)
+		frac := time.duration_seconds(elapsed) / 0.25
+		if frac >= 1 {
+			gtk.widget_set_opacity(detail_box_widget, 1)
+			transition_active = false
+		} else {
+			eased := 1 - (1 - frac) * (1 - frac) * (1 - frac)
+			gtk.widget_set_opacity(detail_box_widget, eased)
+		}
+	}
+	poll_image_jobs()
+	poll_import()
+	return true
+}
+
+filepath_base :: proc(path: string) -> string {
+	// Base name for the form's image label; the stored path
+	// stays "images/<name>".
+	for i := len(path) - 1; i >= 0; i -= 1 {
+		if path[i] == '/' {
+			return path[i + 1:]
+		}
+	}
+	return path
 }
 
 activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
@@ -213,6 +571,24 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	detail_ptr = d
 
 	detail_box := cast(^gtk.Box)gtk.box_new(.VERTICAL, 6)
+	detail_box_widget = cast(^gtk.Widget)detail_box
+	d.image_picture = gtk.picture_new()
+	// SCALE_DOWN: the photo shows at its decoded size (at
+	// most 400x300) and never scales up to fill the pane.
+	gtk.picture_set_content_fit(
+		cast(^gtk.Picture)d.image_picture,
+		gtk.ContentFit.SCALE_DOWN,
+	)
+	loading_spinner := gtk.spinner_new()
+	gtk.spinner_start(cast(^gtk.Spinner)loading_spinner)
+	loading_label := new_label("Loading image…")
+	d.image_spinner_box = gtk.box_new(.HORIZONTAL, 6)
+	gtk.box_append(cast(^gtk.Box)d.image_spinner_box, loading_spinner)
+	gtk.box_append(cast(^gtk.Box)d.image_spinner_box, loading_label)
+	d.image_status = detail_label()
+	gtk.box_append(detail_box, d.image_picture)
+	gtk.box_append(detail_box, d.image_spinner_box)
+	gtk.box_append(detail_box, d.image_status)
 	d.title = detail_label()
 	gtk.box_append(detail_box, d.title)
 	d.description = detail_label()
@@ -269,6 +645,53 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 	gtk.box_append(left_box, search_entry)
 	gtk.box_append(left_box, add_button)
 	gtk.box_append(left_box, list_scrolled)
+	url_entry = gtk.entry_new()
+	set_entry_text(url_entry, "http://localhost:8000/recipes.json")
+	gtk.box_append(left_box, url_entry)
+	import_button = gtk.button_new_with_label("Import from URL")
+	gobj.signal_connect(
+		import_button,
+		"clicked",
+		cast(gobj.Callback)on_import_clicked,
+		window,
+	)
+	gtk.box_append(left_box, import_button)
+	import_file_button = gtk.button_new_with_label("Import from file…")
+	gobj.signal_connect(
+		import_file_button,
+		"clicked",
+		cast(gobj.Callback)on_import_file_clicked,
+		window,
+	)
+	gtk.box_append(left_box, import_file_button)
+	export_box := gtk.box_new(.HORIZONTAL, 6)
+	export_single_button = gtk.button_new_with_label("Export recipe…")
+	gobj.signal_connect(
+		export_single_button,
+		"clicked",
+		cast(gobj.Callback)on_export_single_clicked,
+		window,
+	)
+	gtk.box_append(cast(^gtk.Box)export_box, export_single_button)
+	export_all_button = gtk.button_new_with_label("Export all…")
+	gobj.signal_connect(
+		export_all_button,
+		"clicked",
+		cast(gobj.Callback)on_export_all_clicked,
+		window,
+	)
+	gtk.box_append(cast(^gtk.Box)export_box, export_all_button)
+	gtk.box_append(left_box, export_box)
+	import_spinner := gtk.spinner_new()
+	gtk.spinner_start(cast(^gtk.Spinner)import_spinner)
+	import_spinner_box = gtk.box_new(.HORIZONTAL, 6)
+	gtk.box_append(cast(^gtk.Box)import_spinner_box, import_spinner)
+	gtk.box_append(cast(^gtk.Box)import_spinner_box, new_label("Importing…"))
+	gtk.widget_set_visible(import_spinner_box, false)
+	gtk.box_append(left_box, import_spinner_box)
+	import_status = detail_label()
+	gtk.label_set_wrap(cast(^gtk.Label)import_status, true)
+	gtk.box_append(left_box, import_status)
 
 	root := cast(^gtk.Box)gtk.box_new(.HORIZONTAL, 0)
 	gtk.box_append(root, cast(^gtk.Widget)left_box)
@@ -290,6 +713,9 @@ activate :: proc "c" (app: ^gtk.Application, _: rawptr) {
 			gtk.list_box_get_row_at_index(list_box, 0),
 		)
 	}
+
+	main_window = cast(^gtk.Widget)window
+	glib.timeout_add(16, tick_cb, nil)
 
 	gtk.window_present(window)
 }
@@ -318,6 +744,10 @@ Form :: struct {
 	ing_box, step_box:            ^gtk.Widget,
 	ing_rows:                     [dynamic]IngredientRow,
 	step_rows:                    [dynamic]StepRow,
+	// Image chosen with "Choose image…", stored as
+	// "images/<name>" on save; "" means no image.
+	image_path:  string,
+	image_label: ^gtk.Widget,
 }
 
 entry_text :: proc(w: ^gtk.Widget) -> string {
@@ -369,9 +799,41 @@ rebuild_list :: proc() {
 		}
 		gtk.list_box_remove(main_list_box, child)
 	}
+	clear(&image_row_refs)
 	for idx in filtered {
-		gtk.list_box_append(main_list_box, new_label(recipes[idx].title))
+		r := recipes[idx]
+		// Row: a 32px image slot (photo, spinner, or blank)
+		// plus the title label. Row labels stay
+		// unselectable so the row itself gets the click.
+		row_box := gtk.box_new(.HORIZONTAL, 6)
+		picture := gtk.picture_new()
+		gtk.picture_set_content_fit(
+			cast(^gtk.Picture)picture,
+			gtk.ContentFit.SCALE_DOWN,
+		)
+		gtk.widget_set_size_request(picture, 32, 32)
+		spinner := gtk.spinner_new()
+		gtk.widget_set_size_request(spinner, 32, 32)
+		gtk.spinner_start(cast(^gtk.Spinner)spinner)
+		placeholder := gtk.label_new("")
+		gtk.widget_set_size_request(placeholder, 32, 32)
+		slot := gtk.box_new(.HORIZONTAL, 0)
+		gtk.box_append(cast(^gtk.Box)slot, picture)
+		gtk.box_append(cast(^gtk.Box)slot, spinner)
+		gtk.box_append(cast(^gtk.Box)slot, placeholder)
+		gtk.box_append(cast(^gtk.Box)row_box, slot)
+		gtk.box_append(cast(^gtk.Box)row_box, new_label(r.title))
+		gtk.list_box_append(main_list_box, row_box)
+		ref := Image_Row_Ref{
+			path = r.image_path,
+			picture = picture,
+			spinner = spinner,
+			placeholder = placeholder,
+		}
+		append(&image_row_refs, ref)
+		refresh_row_ref(ref)
 	}
+	start_image_loads()
 }
 
 add_ingredient_row :: proc(f: ^Form) {
@@ -493,6 +955,7 @@ on_add_save :: proc "c" (button: ^gtk.Widget, data: rawptr) {
 		title       = title,
 		description = strings.trim_space(entry_text(f.description)),
 		servings    = int(servings),
+		image_path  = f.image_path,
 		ingredients = ingredients[:],
 		steps       = steps[:],
 		notes       = strings.trim_space(entry_text(f.notes)),
@@ -639,6 +1102,22 @@ open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 		set_entry_text(f.notes, prefill.notes)
 	}
 	gtk.box_append(form_box, f.notes)
+	if prefill != nil {
+		f.image_path = prefill.image_path
+	}
+	choose_button := gtk.button_new_with_label("Choose image…")
+	gobj.signal_connect(
+		choose_button,
+		"clicked",
+		cast(gobj.Callback)on_choose_image_clicked,
+		window,
+	)
+	gtk.box_append(form_box, choose_button)
+	f.image_label = new_label("No image")
+	if f.image_path != "" {
+		set_text(f.image_label, filepath_base(f.image_path))
+	}
+	gtk.box_append(form_box, f.image_label)
 	f.error_label = detail_label()
 	gtk.box_append(form_box, f.error_label)
 
@@ -673,6 +1152,13 @@ open_form :: proc(parent: ^gtk.Window, prefill: ^Recipe, edit_id: i64) {
 		cast(^gtk.Widget)form_scrolled,
 	)
 	gtk.window_present(cast(^gtk.Window)window)
+}
+
+on_choose_image_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
+	context = runtime.default_context()
+	_ = button
+	_ = data
+	open_file_dialog(.Choose_Image, "Choose image", cast(^gtk.Window)main_window)
 }
 
 on_add_clicked :: proc "c" (button: ^gtk.Widget, data: rawptr) {
