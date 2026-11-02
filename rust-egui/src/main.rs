@@ -953,4 +953,79 @@ mod tests {
         assert_eq!(app.import_message, None);
         assert!(app.import_receiver.is_none());
     }
+
+    fn draft_error(draft: &EditDraft) -> String {
+        match draft.to_recipe() {
+            Err(message) => message,
+            Ok(_) => panic!("expected to_recipe to fail"),
+        }
+    }
+
+    fn valid_draft() -> EditDraft {
+        EditDraft {
+            id: 0,
+            title: "Test Soup".to_string(),
+            description: "Line one.\nLine two.".to_string(),
+            servings_text: "2".to_string(),
+            image_path: String::new(),
+            ingredients: vec![Ingredient {
+                amount: "1".to_string(),
+                unit: "cup".to_string(),
+                name: "rice".to_string(),
+            }],
+            steps: vec!["Boil.".to_string()],
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn draft_to_recipe_accepts_valid_draft() {
+        let recipe = valid_draft().to_recipe().unwrap();
+        assert_eq!(recipe.title, "Test Soup");
+        assert_eq!(recipe.servings, 2);
+        assert_eq!(recipe.description, "Line one.\nLine two.");
+        assert_eq!(recipe.image_path, None);
+    }
+
+    #[test]
+    fn draft_to_recipe_rejects_empty_title() {
+        let mut draft = valid_draft();
+        draft.title = String::new();
+        assert_eq!(draft_error(&draft), "Title is required.");
+    }
+
+    #[test]
+    fn draft_to_recipe_rejects_whitespace_only_title() {
+        let mut draft = valid_draft();
+        draft.title = "   ".to_string();
+        assert_eq!(draft_error(&draft), "Title is required.");
+    }
+
+    #[test]
+    fn draft_to_recipe_trims_title() {
+        let mut draft = valid_draft();
+        draft.title = "  Test Soup  ".to_string();
+        assert_eq!(draft.to_recipe().unwrap().title, "Test Soup");
+    }
+
+    #[test]
+    fn draft_to_recipe_rejects_non_numeric_servings() {
+        let mut draft = valid_draft();
+        draft.servings_text = "two".to_string();
+        assert_eq!(draft_error(&draft), "Servings must be a whole number.");
+    }
+
+    #[test]
+    fn draft_to_recipe_rejects_empty_servings() {
+        let mut draft = valid_draft();
+        draft.servings_text = String::new();
+        assert_eq!(draft_error(&draft), "Servings must be a whole number.");
+    }
+
+    #[test]
+    fn draft_to_recipe_rejects_fractional_servings() {
+        let mut draft = valid_draft();
+        draft.servings_text = "2.5".to_string();
+        assert_eq!(draft_error(&draft), "Servings must be a whole number.");
+    }
 }
