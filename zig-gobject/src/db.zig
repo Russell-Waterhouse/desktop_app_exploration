@@ -38,8 +38,8 @@ const std = @import("std");
 // load_error instead of crashing; main shows that error in
 // the detail pane.
 //
-// Only the open/seed/load path is here so far: insert,
-// update, and delete arrive with the add/edit/delete steps.
+// Insert arrived with the add-recipe step; update and
+// delete arrive with the edit/delete steps.
 
 const sqlite3 = opaque {};
 const sqlite3_stmt = opaque {};
@@ -318,6 +318,84 @@ fn loadRecipes(db: *sqlite3) ![]Recipe {
         try list.append(alloc, recipe);
     }
     return list.toOwnedSlice(alloc);
+}
+
+
+fn insertChildren(db: *sqlite3, recipe_id: i64, recipe: Recipe) !void {
+    for (recipe.ingredients, 0..) |ingredient, i| {
+        const istmt = try prepare(db,
+            \\INSERT INTO ingredients
+            \\  (recipe_id, position, amount, unit, name)
+            \\  VALUES (?1, ?2, ?3, ?4, ?5)
+        );
+        defer _ = sqlite3_finalize(istmt);
+        try bindInt(istmt, 1, recipe_id);
+        try bindInt(istmt, 2, @intCast(i));
+        try bindText(istmt, 3, ingredient.amount);
+        try bindText(istmt, 4, ingredient.unit);
+        try bindText(istmt, 5, ingredient.name);
+        if (sqlite3_step(istmt) != SQLITE_DONE) {
+            return setError(db, "inserting ingredient", .{});
+        }
+    }
+
+    for (recipe.steps, 0..) |step, i| {
+        const sstmt = try prepare(db,
+            \\INSERT INTO steps
+            \\  (recipe_id, position, text)
+            \\  VALUES (?1, ?2, ?3)
+        );
+        defer _ = sqlite3_finalize(sstmt);
+        try bindInt(sstmt, 1, recipe_id);
+        try bindInt(sstmt, 2, @intCast(i));
+        try bindText(sstmt, 3, step);
+        if (sqlite3_step(sstmt) != SQLITE_DONE) {
+            return setError(db, "inserting step", .{});
+        }
+    }
+}
+
+fn bindImagePath(stmt: *sqlite3_stmt, idx: c_int, image_path: []const u8) !void {
+    if (image_path.len == 0) {
+        if (sqlite3_bind_null(stmt, idx) != SQLITE_OK) return error.Sqlite;
+    } else {
+        try bindText(stmt, idx, image_path);
+    }
+}
+
+/// Insert a recipe (id is ignored) and its children, in one
+/// transaction. Returns the new recipe id. Like the Rust
+/// version's insert_recipe; the caller reloads afterwards.
+pub fn insertRecipe(recipe: Recipe) !i64 {
+    const db = db_handle orelse return error.NoDatabase;
+    try exec(db, "BEGIN");
+    errdefer exec(db, "ROLLBACK") catch {};
+    const rstmt = try prepare(db,
+        \\INSERT INTO recipes
+        \\  (title, description, servings, image_path, notes)
+        \\  VALUES (?1, ?2, ?3, ?4, ?5)
+    );
+    defer _ = sqlite3_finalize(rstmt);
+    try bindText(rstmt, 1, recipe.title);
+    try bindText(rstmt, 2, recipe.description);
+    try bindInt(rstmt, 3, recipe.servings);
+    try bindImagePath(rstmt, 4, recipe.image_path);
+    try bindText(rstmt, 5, recipe.notes);
+    if (sqlite3_step(rstmt) != SQLITE_DONE) {
+        return setError(db, "inserting recipe", .{});
+    }
+    const recipe_id = sqlite3_last_insert_rowid(db);
+    try insertChildren(db, recipe_id, recipe);
+    try exec(db, "COMMIT");
+    return recipe_id;
+}
+
+/// Re-read recipes from the database after an insert, update,
+/// or delete. Old slices leak into the app-lifetime arena,
+/// which is fine for a test app of this size.
+pub fn reload() !void {
+    const db = db_handle orelse return error.NoDatabase;
+    recipes = try loadRecipes(db);
 }
 
 /// Load from recipes.db in the current working directory on

@@ -69,6 +69,11 @@ first run with the same 3 recipes (src/db.odin declares the
 system SQLite C API by hand, as Odin ships no SQLite
 package; src/recipes.odin holds the seed data). The database
 file is git-ignored, not pushed.
+Add recipe: done — an "Add recipe" button opens a modal
+form window (title required, servings spin button, dynamic
+ingredient and step rows with Remove buttons); saving
+inserts into the database via db.odin, reloads, and selects
+the new recipe.
 Upstream notes Linux and Windows support for the bindings;
 only Linux has been verified here.
 

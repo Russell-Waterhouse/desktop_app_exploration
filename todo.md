@@ -92,7 +92,7 @@ has been tested on Fedora yet.
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
 - [X] recipe view with SQLite integration
-- [ ] add recipe
+- [X] add recipe
 - [ ] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title
@@ -129,7 +129,7 @@ has been tested on Fedora yet.
 - [X] hello world, open window
 - [X] recipe view with hard-coded data
 - [X] recipe view with SQLite integration
-- [ ] add recipe
+- [X] add recipe
 - [ ] edit recipe
 - [ ] delete recipe
 - [ ] recipe list: title, search by title

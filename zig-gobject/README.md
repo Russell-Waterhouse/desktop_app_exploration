@@ -77,6 +77,11 @@ system SQLite C API by hand, as Zig ships no SQLite package
 and Zig 0.17 removed @cImport; the seed data lives in
 src/main.zig and is passed to db.ensureLoaded()). The
 database file is git-ignored, not pushed.
+Add recipe: done — an "Add recipe" button opens a modal
+form window (title required, servings spin button, dynamic
+ingredient and step rows with Remove buttons); saving
+inserts into the database via db.zig, reloads, and selects
+the new recipe.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.
