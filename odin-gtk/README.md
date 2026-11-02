@@ -1,0 +1,67 @@
+# odin-gtk
+
+Odin + GTK4 version of the recipe manager test app, using the
+PucklaJ/odin-gtk bindings (generated Odin bindings to GTK4 and
+libadwaita, including pango and cairo). This stack stands on the
+same Pango text stack as cpp-gtk4, so displayed text shaping
+and label selectability come from GTK itself rather than from
+code in this app.
+
+## Bindings
+
+The bindings are NOT vendored in this repo: they are a large
+generated tree owned by another project, so install_ubuntu.sh
+and install_fedora.sh clone them into third_party/odin-gtk,
+pinned to tag 4.17.2, and src/main.odin imports them by
+relative path, the way the bindings' own examples do. The
+bindings link against the system GTK libraries by default
+(their GLIB_STATIC option is off unless defined), so the
+install scripts install libgtk-4-dev (Ubuntu) / gtk4-devel
+(Fedora); no static-library setup is needed on Linux.
+
+Note the pinned version's API idiom, which differs from the
+bindings' default branch: windows are built in the activate
+handler, signal handlers are passed as cast(gobj.Callback)
+with a trailing nil user-data argument, and the application
+is run through gobj.type_cast to gio.Application with an
+explicit argv. Copying the default-branch example verbatim
+against tag 4.17.2 does not compile (its application_run
+wrapper and WINDOW cast do not exist in 4.17.2).
+
+## Build
+
+Ubuntu:
+
+```sh
+./install_ubuntu.sh
+./build_linux.sh
+./odin-gtk
+```
+
+`install_ubuntu.sh` installs Odin dev-2026-10 to `/opt/odin`
+(with a wrapper at `/usr/local/bin/odin` that sets
+ODIN_ROOT=/opt/odin), libgtk-4-dev, and the bindings.
+
+Fedora (not yet tested here — `install_fedora.sh` is the Fedora
+equivalent of `install_ubuntu.sh`):
+
+```sh
+./install_fedora.sh
+./build_linux.sh
+./odin-gtk
+```
+
+## Status
+
+Hello world, open window: done and verified here — the app
+opens a 900x600 window titled "Recipe Manager" containing a
+"Hello, GTK4!" label, confirmed by screenshot under Xvfb.
+Upstream notes Linux and Windows support for the bindings;
+only Linux has been verified here.
+
+The built `odin-gtk` binary and `third_party/` are git-ignored
+and never pushed.
+
+## Tests
+
+None yet.

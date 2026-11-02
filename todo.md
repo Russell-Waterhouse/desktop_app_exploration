@@ -87,9 +87,9 @@ has been tested on Fedora yet.
 
 ## Odin GTK4 (`odin-gtk/`)
 
-- [ ] install script for Ubuntu
-- [ ] install script for Fedora
-- [ ] hello world, open window
+- [X] install script for Ubuntu
+- [X] install script for Fedora
+- [X] hello world, open window
 - [ ] recipe view with hard-coded data
 - [ ] recipe view with SQLite integration
 - [ ] add recipe
@@ -124,9 +124,9 @@ has been tested on Fedora yet.
 
 ## Zig GTK4 (`zig-gobject/`)
 
-- [ ] install script for Ubuntu
-- [ ] install script for Fedora
-- [ ] hello world, open window
+- [X] install script for Ubuntu
+- [X] install script for Fedora
+- [X] hello world, open window
 - [ ] recipe view with hard-coded data
 - [ ] recipe view with SQLite integration
 - [ ] add recipe
