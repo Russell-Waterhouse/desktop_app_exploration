@@ -63,8 +63,10 @@ pub fn build(b: *std.Build) !void {
     // and encoded bodies over HTTP), and JSON export
     // (json_export.zig: single/collection serialization,
     // re-import round-trips, file-name sanitizing, and
-    // file writes) — no UI or end-to-end tests. The
-    // json_import and json_export tests link the system
+    // file writes), and text undo/redo (text_undo.zig:
+    // typing-run coalescing, separate slow steps, redo
+    // chains, cursor restore) — no UI or end-to-end tests.
+    // The json_import and json_export tests link the system
     // SQLite library like the app does (json_import and
     // json_export import db.zig for its Recipe type, and
     // json_export imports json_import for its re-import
@@ -77,6 +79,7 @@ pub fn build(b: *std.Build) !void {
         .{ .file = "src/image_files.zig", .sqlite = false, .icu = false },
         .{ .file = "src/json_import.zig", .sqlite = true, .icu = true },
         .{ .file = "src/json_export.zig", .sqlite = true, .icu = true },
+        .{ .file = "src/text_undo.zig", .sqlite = false, .icu = false },
     };
     for (test_roots) |root| {
         const test_mod = b.createModule(.{

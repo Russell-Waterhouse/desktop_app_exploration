@@ -146,15 +146,34 @@ detail labels are selectable, so drag-select and Ctrl+C copy
 work (verified by pasting a selection into the search entry);
 list-row titles stay unselectable so row clicks select the
 recipe, the same trade-off as cpp-gtk4.
+Text input: done — description and notes moved from
+single-line entries to wrapped GtkTextViews (Tab moves
+focus, it does not insert a tab), so multiline editing
+works; GTK4's entries and text views have no built-in undo,
+so the form implements it with one pure-logic TextUndo
+(src/text_undo.zig, unit-tested) per text widget, driven
+by a key controller on the form window: Ctrl+Z undoes,
+Ctrl+Shift+Z and Ctrl+Y redo, in whichever text widget has
+focus, with typing runs under a second coalesced into one
+step. The clock is injected (the app passes glib monotonic
+time; Zig 0.17's std has no timestamp helper), which also
+makes the coalescing tests deterministic. The servings spin
+button is left out on purpose: its input is already
+constrained to whole numbers. Fixed along the way: openForm
+never assigned form.image_path for a new recipe, and
+create() does not apply the struct's = "" default, so
+saving a recipe without an image could crash in
+bindImagePath on a garbage-length string; it is now set
+explicitly.
 
 The built `zig-out/` and `third_party/` are git-ignored
 and never pushed.
 
 ## Tests
 
-`zig build test` — 63 tests, all passing: seed counts
+`zig build test` — 70 tests, all passing: seed counts
 (7 recipes / 27 ingredients / 21 steps), search, database
 seed/insert/update/delete round-trip, image copy/collision,
 JSON import (including the encoding fixtures and a one-shot
 local server; the URL tests need the test-data server on
-localhost:8000), and JSON export.
+localhost:8000), JSON export, and text undo/redo.

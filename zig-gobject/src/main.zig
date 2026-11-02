@@ -28,6 +28,7 @@ const recipes = @import("recipes.zig");
 const json_import = @import("json_import.zig");
 const json_export = @import("json_export.zig");
 const image_files = @import("image_files.zig");
+const text_undo = @import("text_undo.zig");
 
 extern fn g_free(?*anyopaque) void;
 
@@ -447,6 +448,16 @@ const StepRow = struct {
     entry: *gtk.Entry,
 };
 
+// One undo registry row per form text widget, so the form
+// window's key handler can find the focused widget's
+// TextUndo without GTK type checks. is_text_view selects
+// the buffer API over the entry API.
+const UndoEntry = struct {
+    widget: *gtk.Widget,
+    undo: *text_undo.TextUndo,
+    is_text_view: bool,
+};
+
 // Form holds the add window's widgets. Heap-allocated like
 // Detail: the window outlives the handler that opens it.
 // Row lists come from the form's arena, never freed.
@@ -454,9 +465,9 @@ const Form = struct {
     window: *gtk.Window,
     edit_id: i64,
     title: *gtk.Entry,
-    description: *gtk.Entry,
+    description: *gtk.TextView,
     servings: *gtk.SpinButton,
-    notes: *gtk.Entry,
+    notes: *gtk.TextView,
     // Image chosen via "Choose image…", copied into
     // images/ at choose time (like odin-gtk); saved with
     // the recipe. Empty means no image.
@@ -467,6 +478,7 @@ const Form = struct {
     step_box: *gtk.Box,
     ing_rows: std.ArrayList(IngredientRow),
     step_rows: std.ArrayList(StepRow),
+    undo_entries: std.ArrayList(UndoEntry),
     arena: std.heap.ArenaAllocator,
 };
 
@@ -483,6 +495,173 @@ fn basenameZ(path: [:0]const u8) [:0]const u8 {
 
 fn entryText(entry: *gtk.Entry) [:0]const u8 {
     return std.mem.span(gtk.Editable.getText(entry.as(gtk.Editable)));
+}
+
+// TextView buffer text, copied into the form's arena (the
+// buffer's own string is freed here with g_free).
+fn textViewText(form: *Form, view: *gtk.TextView) [:0]const u8 {
+    const buffer = gtk.TextView.getBuffer(view);
+    var start: gtk.TextIter = undefined;
+    var end: gtk.TextIter = undefined;
+    gtk.TextBuffer.getStartIter(buffer, &start);
+    gtk.TextBuffer.getEndIter(buffer, &end);
+    const cs = gtk.TextBuffer.getText(buffer, &start, &end, 0);
+    const out = fmtZ(form.arena.allocator(), "{s}", .{std.mem.span(cs)});
+    g_free(cs);
+    return out;
+}
+
+fn setTextViewText(view: *gtk.TextView, text: [:0]const u8) void {
+    const buffer = gtk.TextView.getBuffer(view);
+    gtk.TextBuffer.setText(buffer, text, -1);
+}
+
+// makeTextView builds a wrapped TextView (Tab moves focus,
+// it does not insert a tab) inside a scrolled window fixed
+// to height px.
+fn makeTextView(text: [:0]const u8, height: c_int) struct {
+    scrolled: *gtk.ScrolledWindow,
+    view: *gtk.TextView,
+} {
+    var view = gtk.TextView.new();
+    gtk.TextView.setWrapMode(view, .word);
+    gtk.TextView.setAcceptsTab(view, 0);
+    setTextViewText(view, text);
+    var scrolled = gtk.ScrolledWindow.new();
+    gtk.ScrolledWindow.setChild(scrolled, view.as(gtk.Widget));
+    gtk.ScrolledWindow.setPolicy(scrolled, .never, .automatic);
+    gtk.Widget.setSizeRequest(scrolled.as(gtk.Widget), -1, height);
+    return .{ .scrolled = scrolled, .view = view };
+}
+
+// --- Per-field undo/redo for the form ---
+//
+// GTK4's GtkEntry and GtkTextView have no built-in undo, so
+// each form text widget gets a TextUndo (text_undo.zig),
+// seeded with the widget's current contents and recorded on
+// every change. The servings spin button is left out on
+// purpose: its input is already constrained to the 1..100
+// range, so there is no free text to undo.
+
+fn registerEntryUndo(form: *Form, entry: *gtk.Entry) void {
+    const alloc = form.arena.allocator();
+    const undo = alloc.create(text_undo.TextUndo) catch @panic("oom");
+    undo.* = text_undo.TextUndo.init(
+        alloc,
+        &undoClockNs,
+        entryText(entry),
+        gtk.Editable.getPosition(entry.as(gtk.Editable)),
+    );
+    form.undo_entries.append(alloc, .{
+        .widget = entry.as(gtk.Widget),
+        .undo = undo,
+        .is_text_view = false,
+    }) catch @panic("oom");
+    _ = gtk.Editable.signals.changed.connect(entry, *text_undo.TextUndo, &on_entry_undo_changed, undo, .{});
+}
+
+fn registerTextViewUndo(form: *Form, view: *gtk.TextView) void {
+    const alloc = form.arena.allocator();
+    const undo = alloc.create(text_undo.TextUndo) catch @panic("oom");
+    const text = textViewText(form, view);
+    const buffer = gtk.TextView.getBuffer(view);
+    var iter: gtk.TextIter = undefined;
+    gtk.TextBuffer.getIterAtMark(buffer, &iter, gtk.TextBuffer.getInsert(buffer));
+    undo.* = text_undo.TextUndo.init(alloc, &undoClockNs, text, gtk.TextIter.getOffset(&iter));
+    form.undo_entries.append(alloc, .{
+        .widget = view.as(gtk.Widget),
+        .undo = undo,
+        .is_text_view = true,
+    }) catch @panic("oom");
+    _ = gtk.TextBuffer.signals.changed.connect(buffer, *text_undo.TextUndo, &on_buffer_undo_changed, undo, .{});
+}
+
+fn on_entry_undo_changed(entry: *gtk.Entry, undo: *text_undo.TextUndo) callconv(.c) void {
+    undo.record(entryText(entry), gtk.Editable.getPosition(entry.as(gtk.Editable)));
+}
+
+fn on_buffer_undo_changed(buffer: *gtk.TextBuffer, undo: *text_undo.TextUndo) callconv(.c) void {
+    var start: gtk.TextIter = undefined;
+    var end: gtk.TextIter = undefined;
+    gtk.TextBuffer.getStartIter(buffer, &start);
+    gtk.TextBuffer.getEndIter(buffer, &end);
+    const cs = gtk.TextBuffer.getText(buffer, &start, &end, 0);
+    const text = std.mem.span(cs);
+    var iter: gtk.TextIter = undefined;
+    gtk.TextBuffer.getIterAtMark(buffer, &iter, gtk.TextBuffer.getInsert(buffer));
+    const cursor = gtk.TextIter.getOffset(&iter);
+    undo.record(text, cursor);
+    g_free(cs);
+}
+
+fn applyEntrySnapshot(entry: *gtk.Entry, snap: text_undo.Snapshot, undo: *text_undo.TextUndo) void {
+    undo.setApplying(true);
+    gtk.Editable.setText(entry.as(gtk.Editable), snap.text);
+    gtk.Editable.setPosition(entry.as(gtk.Editable), snap.cursor);
+    undo.setApplying(false);
+}
+
+fn applyTextViewSnapshot(view: *gtk.TextView, snap: text_undo.Snapshot, undo: *text_undo.TextUndo) void {
+    const buffer = gtk.TextView.getBuffer(view);
+    undo.setApplying(true);
+    gtk.TextBuffer.setText(buffer, snap.text, -1);
+    var iter: gtk.TextIter = undefined;
+    // Clamps out-of-range offsets, so a stale cursor is safe.
+    gtk.TextBuffer.getIterAtOffset(buffer, &iter, snap.cursor);
+    gtk.TextBuffer.placeCursor(buffer, &iter);
+    undo.setApplying(false);
+}
+
+// Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo, in whichever
+// form text widget has focus. Shift+Z reports keyval Z (not
+// z with a shift modifier), so undo and redo need separate
+// keyvals: 'z' is 0x7a, 'Z' is 0x5a, 'y' is 0x79. Anything
+// without a TextUndo (buttons, the spin button) falls
+// through untouched.
+// Monotonic clock for text-undo coalescing (glib
+// microseconds to nanoseconds).
+fn undoClockNs() i128 {
+    return @as(i128, glib.getMonotonicTime()) * 1000;
+}
+
+fn on_form_key_pressed(
+    _: *gtk.EventControllerKey,
+    keyval: c_uint,
+    _: c_uint,
+    state: gdk.ModifierType,
+    form: *Form,
+) callconv(.c) c_int {
+    if (!state.control_mask) return 0;
+    const is_undo = keyval == 0x7a;
+    const is_redo = keyval == 0x5a or keyval == 0x79;
+    if (!is_undo and !is_redo) return 0;
+    const focus = gtk.Window.getFocus(form.window) orelse return 0;
+    for (form.undo_entries.items) |entry| {
+        if (entry.widget != focus) continue;
+        const undo = entry.undo;
+        if (entry.is_text_view) {
+            const view: *gtk.TextView = @ptrCast(focus);
+            const text = textViewText(form, view);
+            const buffer = gtk.TextView.getBuffer(view);
+            var iter: gtk.TextIter = undefined;
+            gtk.TextBuffer.getIterAtMark(buffer, &iter, gtk.TextBuffer.getInsert(buffer));
+            const cursor = gtk.TextIter.getOffset(&iter);
+            const snap = if (is_undo) undo.undo(text, cursor) else undo.redo(text, cursor);
+            const s = snap orelse return 1;
+            defer form.arena.allocator().free(s.text);
+            applyTextViewSnapshot(view, s, undo);
+            return 1;
+        }
+        const e: *gtk.Entry = @ptrCast(focus);
+        const text = entryText(e);
+        const cursor = gtk.Editable.getPosition(e.as(gtk.Editable));
+        const snap = if (is_undo) undo.undo(text, cursor) else undo.redo(text, cursor);
+        const s = snap orelse return 1;
+        defer form.arena.allocator().free(s.text);
+        applyEntrySnapshot(e, s, undo);
+        return 1;
+    }
+    return 0;
 }
 
 fn isBlank(text: [:0]const u8) bool {
@@ -551,12 +730,20 @@ fn rebuild_list() void {
     start_image_loads();
 }
 
-fn add_ingredient_row(form: *Form) void {
+fn add_ingredient_row(form: *Form, amount_text: [:0]const u8, unit_text: [:0]const u8, name_text: [:0]const u8) void {
     const alloc = form.arena.allocator();
     var row_box = gtk.Box.new(gtk.Orientation.horizontal, 6);
     var amount = gtk.Entry.new();
     var unit = gtk.Entry.new();
     var name = gtk.Entry.new();
+    // Texts are set before registering undo, so the seed is
+    // the prefilled value, not the empty entry.
+    gtk.Editable.setText(amount.as(gtk.Editable), amount_text);
+    gtk.Editable.setText(unit.as(gtk.Editable), unit_text);
+    gtk.Editable.setText(name.as(gtk.Editable), name_text);
+    registerEntryUndo(form, amount);
+    registerEntryUndo(form, unit);
+    registerEntryUndo(form, name);
     gtk.Box.append(row_box, amount.as(gtk.Widget));
     gtk.Box.append(row_box, unit.as(gtk.Widget));
     gtk.Box.append(row_box, name.as(gtk.Widget));
@@ -572,10 +759,12 @@ fn add_ingredient_row(form: *Form) void {
     }) catch @panic("oom");
 }
 
-fn add_step_row(form: *Form) void {
+fn add_step_row(form: *Form, step_text: [:0]const u8) void {
     const alloc = form.arena.allocator();
     var row_box = gtk.Box.new(gtk.Orientation.horizontal, 6);
     var entry = gtk.Entry.new();
+    gtk.Editable.setText(entry.as(gtk.Editable), step_text);
+    registerEntryUndo(form, entry);
     gtk.Box.append(row_box, entry.as(gtk.Widget));
     var remove = gtk.Button.newWithLabel("Remove");
     gtk.Box.append(row_box, remove.as(gtk.Widget));
@@ -610,11 +799,11 @@ fn on_remove_step(_: *gtk.Button, row_box: *gtk.Widget) callconv(.c) void {
 }
 
 fn on_add_ingredient_row(_: *gtk.Button, form: *Form) callconv(.c) void {
-    add_ingredient_row(form);
+    add_ingredient_row(form, "", "", "");
 }
 
 fn on_add_step_row(_: *gtk.Button, form: *Form) callconv(.c) void {
-    add_step_row(form);
+    add_step_row(form, "");
 }
 
 fn on_add_save(_: *gtk.Button, form: *Form) callconv(.c) void {
@@ -644,12 +833,12 @@ fn on_add_save(_: *gtk.Button, form: *Form) callconv(.c) void {
     }
     var recipe = db.Recipe{
         .title = title,
-        .description = entryText(form.description),
+        .description = textViewText(form, form.description),
         .servings = @intCast(gtk.SpinButton.getValueAsInt(form.servings)),
         .image_path = form.image_path,
         .ingredients = ingredients.items,
         .steps = steps.items,
-        .notes = entryText(form.notes),
+        .notes = textViewText(form, form.notes),
     };
     var saved_id = form.edit_id;
     if (form.edit_id >= 0) {
@@ -709,7 +898,14 @@ fn openForm(parent: *gtk.Window, prefill: ?db.Recipe, edit_id: i64) void {
     form.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     form.ing_rows = .empty;
     form.step_rows = .empty;
+    form.undo_entries = .empty;
     form.edit_id = edit_id;
+    // create() does not apply the struct's field defaults, so
+    // image_path must be set explicitly: an uninitialized
+    // slice here used to crash insertRecipe in bindImagePath
+    // (garbage length) on save. The prefill branch below
+    // overwrites it for edits.
+    form.image_path = "";
     active_form = form;
 
     var window = gtk.Window.new();
@@ -723,15 +919,23 @@ fn openForm(parent: *gtk.Window, prefill: ?db.Recipe, edit_id: i64) void {
     gtk.Window.setModal(window, 1);
     gtk.Window.setDefaultSize(window, 500, 600);
 
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y for the form's text widgets.
+    var key_controller = gtk.EventControllerKey.new();
+    _ = gtk.EventControllerKey.signals.key_pressed.connect(key_controller, *Form, &on_form_key_pressed, form, .{});
+    gtk.Widget.addController(window.as(gtk.Widget), key_controller.as(gtk.EventController));
+
     var form_box = gtk.Box.new(gtk.Orientation.vertical, 6);
     gtk.Box.append(form_box, detail_label_heading("Title:"));
     form.title = gtk.Entry.new();
     if (prefill) |r| gtk.Editable.setText(form.title.as(gtk.Editable), r.title);
+    registerEntryUndo(form, form.title);
     gtk.Box.append(form_box, form.title.as(gtk.Widget));
     gtk.Box.append(form_box, detail_label_heading("Description:"));
-    form.description = gtk.Entry.new();
-    if (prefill) |r| gtk.Editable.setText(form.description.as(gtk.Editable), r.description);
-    gtk.Box.append(form_box, form.description.as(gtk.Widget));
+    const desc_text: [:0]const u8 = if (prefill) |r| r.description else "";
+    const desc = makeTextView(desc_text, 80);
+    form.description = desc.view;
+    registerTextViewUndo(form, desc.view);
+    gtk.Box.append(form_box, desc.scrolled.as(gtk.Widget));
     gtk.Box.append(form_box, detail_label_heading("Servings:"));
     form.servings = gtk.SpinButton.newWithRange(1, 100, 1);
     if (prefill) |r| gtk.SpinButton.setValue(form.servings, @floatFromInt(r.servings));
@@ -744,15 +948,11 @@ fn openForm(parent: *gtk.Window, prefill: ?db.Recipe, edit_id: i64) void {
     gtk.Box.append(form_box, add_ing.as(gtk.Widget));
     if (prefill) |r| {
         for (r.ingredients) |ing| {
-            add_ingredient_row(form);
-            const row = &form.ing_rows.items[form.ing_rows.items.len - 1];
-            gtk.Editable.setText(row.amount.as(gtk.Editable), ing.amount);
-            gtk.Editable.setText(row.unit.as(gtk.Editable), ing.unit);
-            gtk.Editable.setText(row.name.as(gtk.Editable), ing.name);
+            add_ingredient_row(form, ing.amount, ing.unit, ing.name);
         }
-        if (form.ing_rows.items.len == 0) add_ingredient_row(form);
+        if (form.ing_rows.items.len == 0) add_ingredient_row(form, "", "", "");
     } else {
-        add_ingredient_row(form);
+        add_ingredient_row(form, "", "", "");
     }
     gtk.Box.append(form_box, detail_label_heading("Steps:"));
     form.step_box = gtk.Box.new(gtk.Orientation.vertical, 6);
@@ -762,18 +962,18 @@ fn openForm(parent: *gtk.Window, prefill: ?db.Recipe, edit_id: i64) void {
     gtk.Box.append(form_box, add_step.as(gtk.Widget));
     if (prefill) |r| {
         for (r.steps) |step| {
-            add_step_row(form);
-            const row = &form.step_rows.items[form.step_rows.items.len - 1];
-            gtk.Editable.setText(row.entry.as(gtk.Editable), step);
+            add_step_row(form, step);
         }
-        if (form.step_rows.items.len == 0) add_step_row(form);
+        if (form.step_rows.items.len == 0) add_step_row(form, "");
     } else {
-        add_step_row(form);
+        add_step_row(form, "");
     }
     gtk.Box.append(form_box, detail_label_heading("Notes:"));
-    form.notes = gtk.Entry.new();
-    if (prefill) |r| gtk.Editable.setText(form.notes.as(gtk.Editable), r.notes);
-    gtk.Box.append(form_box, form.notes.as(gtk.Widget));
+    const notes_text: [:0]const u8 = if (prefill) |r| r.notes else "";
+    const notes = makeTextView(notes_text, 80);
+    form.notes = notes.view;
+    registerTextViewUndo(form, notes.view);
+    gtk.Box.append(form_box, notes.scrolled.as(gtk.Widget));
     var choose_image = gtk.Button.newWithLabel("Choose image…");
     _ = gtk.Button.signals.clicked.connect(choose_image, *Form, &on_choose_image, form, .{});
     gtk.Box.append(form_box, choose_image.as(gtk.Widget));
