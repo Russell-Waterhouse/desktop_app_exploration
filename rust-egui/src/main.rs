@@ -575,15 +575,23 @@ impl eframe::App for RecipeApp {
                         ui.colored_label(egui::Color32::RED, error);
                     }
 
-                    ui.label("Title:");
-                    ui.text_edit_singleline(&mut draft.title);
-                    ui.label("Description:");
-                    ui.text_edit_multiline(&mut draft.description);
-                    ui.label("Servings:");
-                    ui.text_edit_singleline(&mut draft.servings_text);
-                    ui.label("Image path:");
+                    // Tie each field to its visible label in the
+                    // accessibility tree (no visual change): this is
+                    // what lets a screen reader, and the UI tests,
+                    // find a field by its label.
+                    let title_label = ui.label("Title:");
+                    ui.text_edit_singleline(&mut draft.title)
+                        .labelled_by(title_label.id);
+                    let description_label = ui.label("Description:");
+                    ui.text_edit_multiline(&mut draft.description)
+                        .labelled_by(description_label.id);
+                    let servings_label = ui.label("Servings:");
+                    ui.text_edit_singleline(&mut draft.servings_text)
+                        .labelled_by(servings_label.id);
+                    let image_label = ui.label("Image path:");
                     ui.horizontal(|ui| {
-                        ui.text_edit_singleline(&mut draft.image_path);
+                        ui.text_edit_singleline(&mut draft.image_path)
+                            .labelled_by(image_label.id);
                         if ui.button("Choose image…").clicked() {
                             if let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
@@ -607,18 +615,24 @@ impl eframe::App for RecipeApp {
                     let mut remove_ingredient: Option<usize> = None;
                     for (index, ingredient) in draft.ingredients.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
+                            // No visible label per field here, so
+                            // give each one a name in the
+                            // accessibility tree instead.
                             ui.add(
                                 egui::TextEdit::singleline(&mut ingredient.amount)
                                     .desired_width(50.0),
-                            );
+                            )
+                            .accessible_name(format!("Ingredient {} amount", index + 1));
                             ui.add(
                                 egui::TextEdit::singleline(&mut ingredient.unit)
                                     .desired_width(50.0),
-                            );
+                            )
+                            .accessible_name(format!("Ingredient {} unit", index + 1));
                             ui.add(
                                 egui::TextEdit::singleline(&mut ingredient.name)
                                     .desired_width(200.0),
-                            );
+                            )
+                            .accessible_name(format!("Ingredient {} name", index + 1));
                             if ui.button("Remove").clicked() {
                                 remove_ingredient = Some(index);
                             }
@@ -642,7 +656,8 @@ impl eframe::App for RecipeApp {
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(step).desired_width(400.0),
-                            );
+                            )
+                            .accessible_name(format!("Step {}", index + 1));
                             if ui.button("Remove").clicked() {
                                 remove_step = Some(index);
                             }
@@ -656,8 +671,9 @@ impl eframe::App for RecipeApp {
                     }
                     ui.separator();
 
-                    ui.label("Notes:");
-                    ui.text_edit_multiline(&mut draft.notes);
+                    let notes_label = ui.label("Notes:");
+                    ui.text_edit_multiline(&mut draft.notes)
+                        .labelled_by(notes_label.id);
                     ui.separator();
 
                     let mut saved = false;
@@ -1027,5 +1043,228 @@ mod tests {
         let mut draft = valid_draft();
         draft.servings_text = "2.5".to_string();
         assert_eq!(draft_error(&draft), "Servings must be a whole number.");
+    }
+
+    // UI tests, driven by egui_kittest (headless, in-process): the
+    // harness runs the real RecipeApp, clicks and types through the
+    // AccessKit tree, and the assertions below check both the tree
+    // (what is shown) and the app state (what the click changed).
+    // The seeded DB lives in a throwaway directory held by TestCwd,
+    // exactly like the DB unit tests, so these tests never touch the
+    // app's real recipes.db and never run in parallel with each other.
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    fn ui_harness() -> (Harness<'static, RecipeApp>, TestCwd) {
+        let (app, cwd) = seeded_app();
+        let mut app = Some(app);
+        let harness = Harness::builder()
+            .with_size(egui::Vec2::new(900.0, 600.0))
+            // The seed includes Arabic, Devanagari, Chinese, and emoji
+            // titles, whose glyphs are not in the harness's default
+            // font set, so laying them out would panic. Tofu lets the
+            // tests assert on the text and state; the shaping itself
+            // was already verified in the real app, under Xvfb.
+            .allow_missing_glyphs()
+            .build_eframe(move |_cc| app.take().unwrap());
+        (harness, cwd)
+    }
+
+    #[test]
+    fn ui_list_click_shows_recipe_detail() {
+        let (mut harness, _cwd) = ui_harness();
+        // Initially the first seeded recipe is selected.
+        assert_eq!(harness.state().selected_id, Some(1));
+        harness.get_by_label("Tomato Basil Pasta").click();
+        harness.run();
+        let tomato = harness
+            .state()
+            .recipes
+            .iter()
+            .find(|recipe| recipe.title == "Tomato Basil Pasta")
+            .unwrap()
+            .clone();
+        assert_eq!(harness.state().selected_id, Some(tomato.id));
+        // The detail pane shows this recipe, not the first one.
+        assert!(
+            harness
+                .query_by_label("A quick weeknight pasta with fresh tomatoes and basil.")
+                .is_some()
+        );
+        assert_eq!(harness.state().selected_recipe().unwrap().title, tomato.title);
+    }
+
+    // Focus a text field, type into it, and run a frame, in that
+    // order. The field is re-queried after every run: a node belongs
+    // to the tree it was queried from, and the tree is rebuilt by
+    // each run.
+    fn type_into(harness: &mut Harness<'static, RecipeApp>, label: &str, text: &str) {
+        harness.get_by_label(label).focus();
+        harness.get_by_label(label).type_text(text);
+        harness.run();
+    }
+
+    #[test]
+    fn ui_search_filters_list() {
+        let (mut harness, _cwd) = ui_harness();
+        // The search field is the first text input in the tree (the
+        // left pane comes before the detail pane); it is found by
+        // role here because its visible label is a separate "Search
+        // recipes:" label and its hint text is a placeholder, not a
+        // label, so a label query would not reliably find it.
+        let search = harness
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .unwrap();
+        search.focus();
+        search.type_text("pasta");
+        harness.run();
+        assert_eq!(harness.state().search, "pasta");
+        assert!(harness.query_by_label("Tomato Basil Pasta").is_some());
+        // Chicken Stir Fry appears only in the list, never in the
+        // detail pane, so its absence proves the list filtered.
+        assert!(harness.query_by_label("Chicken Stir Fry").is_none());
+    }
+
+    #[test]
+    fn ui_add_recipe_via_form() {
+        let (mut harness, _cwd) = ui_harness();
+        harness.get_by_label("Add recipe").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().mode,
+            Mode::Editing { is_new: true, .. }
+        ));
+        type_into(&mut harness, "Title:", "Test Soup");
+        type_into(&mut harness, "Description:", "A test soup.");
+        type_into(&mut harness, "Servings:", "2");
+        harness.get_by_label("Add ingredient").click();
+        harness.run();
+        type_into(&mut harness, "Ingredient 1 amount", "1");
+        type_into(&mut harness, "Ingredient 1 unit", "cup");
+        type_into(&mut harness, "Ingredient 1 name", "water");
+        harness.get_by_label("Add step").click();
+        harness.run();
+        type_into(&mut harness, "Step 1", "Boil.");
+        type_into(&mut harness, "Notes:", "Serve hot.");
+        // Save sits at the bottom of a scrolling form, so click it
+        // through the accessibility tree rather than by screen
+        // position; it may be scrolled out of view.
+        harness.get_by_label("Save").click_accesskit();
+        harness.run();
+        assert!(matches!(harness.state().mode, Mode::Viewing));
+        assert_eq!(harness.state().recipes.len(), 8);
+        let soup = harness
+            .state()
+            .recipes
+            .iter()
+            .find(|recipe| recipe.title == "Test Soup")
+            .unwrap()
+            .clone();
+        assert_eq!(soup.servings, 2);
+        assert_eq!(soup.description, "A test soup.");
+        assert_eq!(soup.notes, "Serve hot.");
+        assert_eq!(soup.ingredients.len(), 1);
+        assert_eq!(soup.ingredients[0].name, "water");
+        assert_eq!(soup.steps, vec!["Boil."]);
+        assert_eq!(harness.state().selected_id, Some(soup.id));
+        // The saved recipe is also on disk: a fresh load sees it.
+        assert_eq!(db::load_recipes().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn ui_add_recipe_rejects_empty_title() {
+        let (mut harness, _cwd) = ui_harness();
+        harness.get_by_label("Add recipe").click();
+        harness.run();
+        type_into(&mut harness, "Servings:", "2");
+        harness.get_by_label("Save").click_accesskit();
+        harness.run();
+        assert_eq!(
+            harness.state().form_error.as_deref(),
+            Some("Title is required.")
+        );
+        assert!(matches!(harness.state().mode, Mode::Editing { .. }));
+        assert_eq!(harness.state().recipes.len(), 7);
+        assert!(harness.query_by_label("Title is required.").is_some());
+    }
+
+    #[test]
+    fn ui_edit_recipe_changes_title() {
+        let (mut harness, _cwd) = ui_harness();
+        harness.get_by_label("Edit").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().mode,
+            Mode::Editing { is_new: false, .. }
+        ));
+        assert_eq!(
+            harness.get_by_label("Title:").value().as_deref(),
+            Some("Banana Bread")
+        );
+        harness
+            .get_by_label("Title:")
+            .set_text_value_accesskit("Banana Bread Edited");
+        harness.run();
+        harness.get_by_label("Save").click_accesskit();
+        harness.run();
+        assert!(matches!(harness.state().mode, Mode::Viewing));
+        let edited = harness
+            .state()
+            .recipes
+            .iter()
+            .find(|recipe| recipe.id == 1)
+            .unwrap()
+            .clone();
+        assert_eq!(edited.title, "Banana Bread Edited");
+        assert_eq!(db::load_recipes().unwrap()[0].title, "Banana Bread Edited");
+    }
+
+    #[test]
+    fn ui_delete_recipe_removes_it() {
+        let (mut harness, _cwd) = ui_harness();
+        harness.get_by_label("Delete").click();
+        harness.run();
+        harness.get_by_label("Confirm delete").click();
+        harness.run();
+        assert_eq!(harness.state().recipes.len(), 6);
+        assert!(
+            !harness
+                .state()
+                .recipes
+                .iter()
+                .any(|recipe| recipe.title == "Banana Bread")
+        );
+        // Banana Bread was the selected recipe, so after deletion
+        // it must be gone from the whole tree, not just the list.
+        assert!(harness.query_by_label("Banana Bread").is_none());
+        assert_eq!(db::load_recipes().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn ui_complex_text_input() {
+        let (mut harness, _cwd) = ui_harness();
+        harness.get_by_label("Add recipe").click();
+        harness.run();
+        // One script per field: Arabic (plus emoji) in the title,
+        // Devanagari in the description, Simplified Chinese in the
+        // notes. The glyphs render as tofu in the harness (see
+        // ui_harness), so this proves the text handling, not the
+        // shaping, which the real app already showed under Xvfb.
+        type_into(&mut harness, "Title:", "اختبار عربي 🥞");
+        type_into(&mut harness, "Description:", "पालक पनीर परीक्षण");
+        type_into(&mut harness, "Servings:", "2");
+        type_into(&mut harness, "Notes:", "番茄炒蛋测试");
+        harness.get_by_label("Save").click_accesskit();
+        harness.run();
+        let saved = harness
+            .state()
+            .recipes
+            .iter()
+            .find(|recipe| recipe.title == "اختبار عربي 🥞")
+            .unwrap()
+            .clone();
+        assert_eq!(saved.description, "पालक पनीर परीक्षण");
+        assert_eq!(saved.notes, "番茄炒蛋测试");
+        assert_eq!(saved.servings, 2);
     }
 }

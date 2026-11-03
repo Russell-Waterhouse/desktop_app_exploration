@@ -5,6 +5,11 @@ edition = "2021"
 
 [dependencies]
 eframe = "0.37.0"
+
+[dev-dependencies]
+# Headless UI tests: state assertions only, no image snapshots, so no
+# wgpu/snapshot features (and no GPU requirement in the test VM).
+egui_kittest = { version = "0.37.0", features = ["eframe"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

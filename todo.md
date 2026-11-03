@@ -42,8 +42,8 @@ has been tested on Fedora yet.
   - [X] unit tests for recipe data
   - [X] unit tests for search
   - [X] unit tests for encoding logic
-- [ ] UI tests for recipe list/detail, add, edit, and delete
-  - [ ] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
+- [X] UI tests for recipe list/detail, add, edit, and delete
+  - [X] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
 - [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
