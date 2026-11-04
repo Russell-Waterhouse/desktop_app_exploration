@@ -1,0 +1,2 @@
+timestamp,stack,compile_time_clean_debug_seconds,compile_time_cached_debug_seconds,compile_time_clean_release_seconds,compile_time_cached_release_seconds,binary_size_debug_bytes,binary_size_release_bytes,memory_peak_debug_kb,memory_average_debug_kb,memory_peak_release_kb,memory_average_release_kb,cpu_peak_debug_percent,cpu_average_debug_percent,cpu_peak_release_percent,cpu_average_release_percent
+2026-11-03 19:05:49,rust-egui,302.948,1.674,767.716,1.670,443878656,33273368,176029,176023,147552,147542,59.98,6.66,0,0.00
