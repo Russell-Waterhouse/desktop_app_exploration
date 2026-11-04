@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the toolchains and build dependencies for all seven
+# Install the toolchains and build dependencies for all nine
 # recipe-manager stacks on Fedora. Run this once on a new machine,
 # then build with ./build_all_linux.sh.
 #
@@ -9,11 +9,11 @@
 # themselves, and only for the system packages, while the Rust
 # toolchain installs per-user with rustup into $HOME/.cargo.
 #
-# Running both Rust scripts and both Odin scripts is safe: each
+# Running the Rust, Odin, and Zig scripts repeatedly is safe: each
 # one installs the same pinned toolchain (Rust 1.99.1, Odin
-# dev-2026-10), and skips its toolchain download when that version
-# is already installed. The system-package installs are repeated
-# but idempotent.
+# dev-2026-10, Zig 0.17.0), and skips its toolchain download when
+# that version is already installed. The system-package installs
+# are repeated but idempotent.
 #
 # Not yet tested on Fedora: the per-stack Fedora scripts
 # themselves are not yet tested on Fedora (see their headers),
@@ -46,5 +46,11 @@ echo "=== odin-microui ==="
 
 echo "=== zig-dvui ==="
 ./zig-dvui/install_fedora.sh
+
+echo "=== odin-gtk ==="
+./odin-gtk/install_fedora.sh
+
+echo "=== zig-gobject ==="
+./zig-gobject/install_fedora.sh
 
 echo "Installed dependencies for all stacks. Build with ./build_all_linux.sh"

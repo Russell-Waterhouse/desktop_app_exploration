@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run all seven recipe-manager stacks on Linux, one after
+# Run all nine recipe-manager stacks on Linux, one after
 # another, in the same order as build_all_linux.sh.
 #
 # Build first with ./build_all_linux.sh. Each app runs in the
@@ -19,9 +19,7 @@ cd "$(dirname "$0")"
 
 # Stack name, directory, and binary (relative to that
 # directory), in build_all_linux.sh order. These are the
-# binaries the per-stack build_linux.sh scripts (and, for
-# rust-egui, the plain `cargo build` in build_all_linux.sh)
-# produce.
+# binaries the per-stack build_linux.sh scripts produce.
 STACKS=(
     "rust-egui|rust-egui|target/debug/rust-egui"
     "rust-iced|rust-iced|target/debug/rust-iced"
@@ -30,6 +28,8 @@ STACKS=(
     "odin-raygui|odin-raygui|odin-raygui"
     "odin-microui|odin-microui|odin-microui"
     "zig-dvui|zig-dvui|zig-out/bin/zig-dvui"
+    "odin-gtk|odin-gtk|odin-gtk"
+    "zig-gobject|zig-gobject|zig-out/bin/zig-gobject"
 )
 
 # Check every binary exists before running any of them, so a
