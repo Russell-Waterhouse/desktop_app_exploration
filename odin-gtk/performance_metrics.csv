@@ -1,0 +1,2 @@
+timestamp,stack,compile_time_clean_debug_seconds,compile_time_cached_debug_seconds,compile_time_clean_release_seconds,compile_time_cached_release_seconds,binary_size_debug_bytes,binary_size_release_bytes,memory_peak_debug_kb,memory_average_debug_kb,memory_peak_release_kb,memory_average_release_kb,cpu_peak_debug_percent,cpu_average_debug_percent,cpu_peak_release_percent,cpu_average_release_percent
+2026-11-03 19:57:00,odin-gtk,3.586,3.371,10.726,10.686,1877960,592864,188468,188428,188754,188749,2.96,2.50,3.91,2.71
