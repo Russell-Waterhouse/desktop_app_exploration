@@ -46,7 +46,6 @@ has been tested on Fedora yet.
   - [X] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
-- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## C/C++ GTK4 (`cpp-gtk4/`)
 
@@ -83,7 +82,6 @@ has been tested on Fedora yet.
   - [X] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
-- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Odin GTK4 (`odin-gtk/`)
 
@@ -120,7 +118,6 @@ has been tested on Fedora yet.
   - [X] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
-- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
 
 ## Zig GTK4 (`zig-gobject/`)
 
@@ -157,4 +154,3 @@ has been tested on Fedora yet.
   - [X] UI test input in Arabic, Devanagari, Simplified Chinese, and emoji
 - [ ] Windows build
 - [ ] macOS build
-- [ ] stretch: OAuth sign-in against a local mock identity provider (not a live account): system-browser flow with PKCE, redirect handling, secure token storage, and refresh/expiry handling
