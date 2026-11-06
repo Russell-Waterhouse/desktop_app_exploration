@@ -1,20 +1,26 @@
 {
     "dependencies": {
+        "chardet": "^2.1.0",
         "react": "^19.2.0",
         "react-dom": "^19.2.0"
     },
     "description": "Recipe manager test app: Electron + React version",
     "devDependencies": {
+        "@playwright/test": "^1.57.0",
         "@vitejs/plugin-react": "^5.0.0",
         "electron": "^45.2.3",
-        "vite": "^7.0.0"
+        "vite": "^7.0.0",
+        "vitest": "^4.0.18"
     },
     "main": "electron/main.cjs",
     "name": "electron-react-recipe-manager",
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "start": "electron ."
+        "start": "electron .",
+        "test": "vitest run",
+        "test:ui": "playwright test"
     },
-    "version": "0.1.0"
+    "version": "0.1.0",
+    "type": "module"
 }

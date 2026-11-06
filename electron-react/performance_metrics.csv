@@ -1,0 +1,2 @@
+timestamp,stack,compile_time_clean_debug_seconds,compile_time_cached_debug_seconds,compile_time_clean_release_seconds,compile_time_cached_release_seconds,binary_size_debug_bytes,binary_size_release_bytes,memory_peak_debug_kb,memory_average_debug_kb,memory_peak_release_kb,memory_average_release_kb,cpu_peak_debug_percent,cpu_average_debug_percent,cpu_peak_release_percent,cpu_average_release_percent
+2026-11-06 05:31:47,electron-react,2.410,2.426,2.410,2.426,287488971,287488971,240507,239730,240507,239730,2.17,0.31,2.17,0.31

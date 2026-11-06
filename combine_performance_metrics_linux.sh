@@ -9,6 +9,7 @@
 #   cpp-gtk4/performance_metrics.csv
 #   odin-gtk/performance_metrics.csv
 #   zig-gobject/performance_metrics.csv
+#   electron-react/performance_metrics.csv
 # Each is produced by that stack's profile_performance_linux.sh
 # (one row per run, header written only if the file has no
 # content, so repeated runs accumulate rows).
@@ -73,6 +74,7 @@ STACKS=(
     "cpp-gtk4"
     "odin-gtk"
     "zig-gobject"
+    "electron-react"
 )
 
 tmp="$(mktemp)"
