@@ -157,9 +157,9 @@ has been tested on Fedora yet.
 
 ## Electron + React (`electron-react/`)
 
-- [ ] install script for Ubuntu
-- [ ] install script for Fedora
-- [ ] hello world, open window
+- [X] install script for Ubuntu
+- [X] install script for Fedora
+- [X] hello world, open window
 - [ ] recipe view with hard-coded data
 - [ ] recipe view with SQLite integration
 - [ ] add recipe
